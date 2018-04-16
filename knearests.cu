@@ -21,9 +21,9 @@
 
 __device__ int cellFromPoint(int xdim, int ydim, int zdim, float x, float y, float z)
 {
-  int   i = (int)floor(x * (float)xdim);
-  int   j = (int)floor(y * (float)ydim);
-  int   k = (int)floor(z * (float)zdim);
+  int   i = (int)floor(x * (float)xdim / 1000.f);
+  int   j = (int)floor(y * (float)ydim / 1000.f);
+  int   k = (int)floor(z * (float)zdim / 1000.f);
   i = max(0, min(i, xdim - 1));
   j = max(0, min(j, ydim - 1));
   k = max(0, min(k, zdim - 1));
