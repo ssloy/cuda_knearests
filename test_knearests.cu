@@ -63,51 +63,65 @@ int main(int argc, char** argv) {
         std::cerr << "Usage: " << argv[0] << " points.xyz" << std::endl;
         return 1;
     }
+    
     std::vector<float> points;
-    if (!load_file(argv[1], points)) {
-        std::cerr << argv[1] << ": could not load file" << std::endl;
-        return 1;
-    }
-    int nb_points = points.size() / 3;
-    assert(nb_points*3 == points.size());
+    const int DEFAULT_NB_PLANES = 35; // touche pas à ça
+    std::vector<int> neighbors;
 
-    float xmin,ymin,zmin,xmax,ymax,zmax;
-    get_bbox(points, xmin, ymin, zmin, xmax, ymax, zmax);
-
-    float maxside = std::max(std::max(xmax-xmin, ymax-ymin), zmax-zmin);
-    for (int i=0; i<nb_points; i++) {
-        points[i*3+0] = (points[i*3+0]-xmin)/maxside;
-        points[i*3+1] = (points[i*3+1]-ymin)/maxside;
-        points[i*3+2] = (points[i*3+2]-zmin)/maxside;
-    }
-    for (int i=0; i<points.size(); i++) {
-        points[i] *= 1000.;
-    }
-    get_bbox(points, xmin, ymin, zmin, xmax, ymax, zmax);
-    std::cerr << "[" << xmin << ":" << xmax << "], [" << ymin << ":" << ymax << ", [" << zmin << ":" << zmax << "]" << std::endl;
-
-
-
-    kn_problem *kn = kn_prepare(points.data(), nb_points);
-    kn_solve(kn);
-
-    // iterator, just show the few first points
-    kn_iterator *it = kn_begin_enum(kn);
-    for (int p = 0; p < min(3,kn_num_points(kn)); p++) {
-        float *pt = kn_point(it, p);
-        fprintf(stderr, "point %d (%f,%f,%f)\n",p,pt[0],pt[1],pt[2]);
-        float *knpt = kn_first_nearest(it,p);
-        int k = 0;
-        while (knpt) {
-            fprintf(stderr, "   knearest [%d] (%f,%f,%f)\n", k, knpt[0], knpt[1], knpt[2]);
-            k++;
-            knpt = kn_next_nearest(it);
+    { // load point cloud file
+        if (!load_file(argv[1], points)) {
+            std::cerr << argv[1] << ": could not load file" << std::endl;
+            return 1;
         }
     }
 
-    kn_sanity_check(kn); // very slow sanity checks
+    { // normalize point cloud between [0,1000]^3
+        float xmin,ymin,zmin,xmax,ymax,zmax;
+        get_bbox(points, xmin, ymin, zmin, xmax, ymax, zmax);
 
-    kn_free(&kn);
+        float maxside = std::max(std::max(xmax-xmin, ymax-ymin), zmax-zmin);
+        for (int i=0; i<points.size()/3; i++) {
+            points[i*3+0] = (points[i*3+0]-xmin)/maxside;
+            points[i*3+1] = (points[i*3+1]-ymin)/maxside;
+            points[i*3+2] = (points[i*3+2]-zmin)/maxside;
+        }
+        for (int i=0; i<points.size(); i++) {
+            points[i] *= 1000.;
+        }
+        get_bbox(points, xmin, ymin, zmin, xmax, ymax, zmax);
+        std::cerr << "[" << xmin << ":" << xmax << "], [" << ymin << ":" << ymax << ", [" << zmin << ":" << zmax << "]" << std::endl;
+    }
+
+    { // solve kn problem
+        neighbors.resize(points.size()/3*DEFAULT_NB_PLANES);
+        kn_problem *kn = kn_prepare(points.data(), points.size()/3);
+        kn_solve(kn);
+
+        kn_iterator *it = kn_begin_enum(kn); // retrieve neighbors, skip the point itself
+        for (int v=0; v<points.size()/3; v++) {
+            unsigned int knpt = kn_first_nearest_id(it,v);
+            int j = 0;
+            while (knpt!=UINT_MAX) {
+                if (v!=knpt) {
+                    neighbors[v*DEFAULT_NB_PLANES + j] = knpt;
+                }
+                knpt = kn_next_nearest_id(it);
+                j++;
+            }
+            assert(j==DEFAULT_NB_PLANES+1);
+        }
+
+        // the data was re-ordered, so retreive it from the GPU
+        float *fp = kn_point(it, 0); 
+        for (int v=0; v<points.size(); v++) {
+            points[v] = fp[v];
+        }
+
+        kn_sanity_check(kn); // very slow sanity checks
+
+        kn_free(&kn);
+    }
+
     return 0;
 }
 

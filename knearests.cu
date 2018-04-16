@@ -13,8 +13,8 @@
 
 // ------------------------------------------------------------
 
-#define KN_kernel        7
-#define KN_global        28 // int * KN_kernel
+#define KN_kernel        9
+#define KN_global        36 // int * KN_kernel
 #define POINTS_PER_BLOCK 64
 
 // ------------------------------------------------------------
@@ -670,6 +670,18 @@ float        *kn_first_nearest(kn_iterator *it, int point_id)
 
 // ------------------------------------------------------------
 
+unsigned int kn_first_nearest_id(kn_iterator *it, int point_id) {
+    it->point_id = point_id + 1;
+    it->k_rank = 0;
+    unsigned int kid = it->kns[it->point_id + it->k_rank*it->allocated_points];
+    if (kid<UINT_MAX && kid>0) {
+        return kid-1;
+    } 
+    return UINT_MAX;
+}
+
+// ------------------------------------------------------------
+
 float        *kn_next_nearest(kn_iterator *it)
 {
   it->k_rank++;
@@ -680,6 +692,18 @@ float        *kn_next_nearest(kn_iterator *it)
   } else {
     return NULL;
   }
+}
+
+// ------------------------------------------------------------
+
+unsigned int kn_next_nearest_id(kn_iterator *it) {
+    it->k_rank++;
+    if (it->k_rank >= it->K) return UINT_MAX;
+    unsigned int kid = it->kns[it->point_id + it->k_rank*it->allocated_points];
+    if (kid<UINT_MAX && kid>0) {
+        return kid-1;
+    } 
+    return UINT_MAX;
 }
 
 // ------------------------------------------------------------
