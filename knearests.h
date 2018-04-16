@@ -21,4 +21,6 @@ float        *kn_next_nearest (kn_iterator *iter);
 unsigned int kn_first_nearest_id(kn_iterator *iter,int point_id);
 unsigned int kn_next_nearest_id (kn_iterator *iter);
 void          kn_end_enum(kn_iterator **kn);
+void kn_print_stats(kn_problem *kn);
+void kn_check_for_dupes(kn_problem *kn);
 

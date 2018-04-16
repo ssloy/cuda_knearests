@@ -3,6 +3,7 @@
 #include <fstream>
 #include <sstream>
 #include <cassert>
+#include <set>
 
 #include "knearests.h"
 
@@ -89,11 +90,11 @@ int main(int argc, char** argv) {
             points[i] *= 1000.;
         }
         get_bbox(points, xmin, ymin, zmin, xmax, ymax, zmax);
-        std::cerr << "[" << xmin << ":" << xmax << "], [" << ymin << ":" << ymax << ", [" << zmin << ":" << zmax << "]" << std::endl;
+        std::cerr << "bbox [" << xmin << ":" << xmax << "], [" << ymin << ":" << ymax << ", [" << zmin << ":" << zmax << "]" << std::endl;
     }
 
     { // solve kn problem
-        neighbors.resize(points.size()/3*DEFAULT_NB_PLANES);
+        neighbors = std::vector<int>(points.size()/3*DEFAULT_NB_PLANES, -1);
         kn_problem *kn = kn_prepare(points.data(), points.size()/3);
         kn_solve(kn);
 
@@ -104,11 +105,11 @@ int main(int argc, char** argv) {
             while (knpt!=UINT_MAX) {
                 if (v!=knpt) {
                     neighbors[v*DEFAULT_NB_PLANES + j] = knpt;
+                    j++;
                 }
                 knpt = kn_next_nearest_id(it);
-                j++;
             }
-            assert(j==DEFAULT_NB_PLANES+1);
+            assert(j==DEFAULT_NB_PLANES);
         }
 
         // the data was re-ordered, so retreive it from the GPU
@@ -116,11 +117,30 @@ int main(int argc, char** argv) {
         for (int v=0; v<points.size(); v++) {
             points[v] = fp[v];
         }
+        kn_print_stats(kn);
+        kn_check_for_dupes(kn);
 
-        kn_sanity_check(kn); // very slow sanity checks
+//        kn_sanity_check(kn); // very slow sanity checks
 
         kn_free(&kn);
     }
+
+    { // re-check for dupes
+        for (int v=0; v<points.size()/3; v++) {
+            std::set<int> kns;
+            for (int i=0; i<DEFAULT_NB_PLANES; i++) {
+                int kni = neighbors[v*DEFAULT_NB_PLANES+i];
+                if (kni < UINT_MAX) {
+                    if (kns.find(kni) != kns.end()) {
+                        std::cerr << "ERROR duplicated entry for point " << v << std::endl;
+                        return 1;
+                    }
+                    kns.insert(kni);
+                }
+            }
+        }
+    }
+
 
     return 0;
 }
