@@ -19,3 +19,4 @@ float        *kn_point(kn_iterator *iter, int point_id);
 float        *kn_first_nearest(kn_iterator *iter,int point_id);
 float        *kn_next_nearest (kn_iterator *iter);
 void          kn_end_enum(kn_iterator **kn);
+
