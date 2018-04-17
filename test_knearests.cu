@@ -74,6 +74,9 @@ int main(int argc, char** argv) {
             std::cerr << argv[1] << ": could not load file" << std::endl;
             return 1;
         }
+        for (int i=0; i<points.size(); i++) {
+            points[i] = rand()/(float)RAND_MAX;
+        }
     }
 
     { // normalize point cloud between [0,1000]^3
@@ -140,8 +143,6 @@ int main(int argc, char** argv) {
             }
         }
     }
-
-
     return 0;
 }
 
