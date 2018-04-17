@@ -123,7 +123,7 @@ int main(int argc, char** argv) {
         kn_print_stats(kn);
         kn_check_for_dupes(kn);
 
-//        kn_sanity_check(kn); // very slow sanity checks
+        kn_sanity_check(kn); // very slow sanity checks
 
         kn_free(&kn);
     }
