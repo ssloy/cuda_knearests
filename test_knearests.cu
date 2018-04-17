@@ -5,6 +5,8 @@
 #include <cassert>
 #include <algorithm>
 #include "VBW.h"
+#include <set>
+
 #include "knearests.h"
 #   include <windows.h>
 const int DEFAULT_NB_PLANES = 35; // touche pas à ça
@@ -86,75 +88,78 @@ void voro_cell(int seed, float * pts, int* neigs, float bmin0, float bmin1, floa
 }
 
 int main(int argc, char** argv) {
-    if (2>argc) {
-        std::cerr << "Usage: " << argv[0] << " points.xyz" << std::endl;
-        return 1;
-    }
-    
-    std::vector<float> points;
-    
-    std::vector<int> neighbors;
-    std::vector<double> watch(1, now());
-    { 
-        if (!load_file(argv[1], points)) {
-            std::cerr << argv[1] << ": could not load file" << std::endl;
-            return 1;
-        }
-	int NBPTS = points.size()/3;
-	points.resize(3 * NBPTS);
-	FOR(i, 3*NBPTS) points[i] = double(rand()) / RAND_MAX;
-    }
+	if (2 > argc) {
+		std::cerr << "Usage: " << argv[0] << " points.xyz" << std::endl;
+		return 1;
+	}
 
-    { // normalize point cloud between [0,1000]^3
-        float xmin,ymin,zmin,xmax,ymax,zmax;
-        get_bbox(points, xmin, ymin, zmin, xmax, ymax, zmax);
+	std::vector<float> points;
 
-        float maxside = std::max(std::max(xmax-xmin, ymax-ymin), zmax-zmin);
-        for (int i=0; i<points.size()/3; i++) {
-            points[i*3+0] = (points[i*3+0]-xmin)/maxside;
-            points[i*3+1] = (points[i*3+1]-ymin)/maxside;
-            points[i*3+2] = (points[i*3+2]-zmin)/maxside;
-        }
-        for (int i=0; i<points.size(); i++) {
-            points[i] *= 1000.;
-        }
-        get_bbox(points, xmin, ymin, zmin, xmax, ymax, zmax);
-        std::cerr << "[" << xmin << ":" << xmax << "], [" << ymin << ":" << ymax << ", [" << zmin << ":" << zmax << "]" << std::endl;
-    }
-
-    std::cerr << "\n----------------------------------------pointset loaded in " << now() - watch.back() << " seconds\n"; watch.push_back(now());
-
-    { // solve kn problem
-        neighbors.resize(points.size()/3*DEFAULT_NB_PLANES);
-	std::cerr << "\n----------------------------------------memory for neig reserved in " << now() - watch.back() << " seconds\n"; watch.push_back(now());
-	kn_problem *kn = kn_prepare(points.data(), points.size()/3);
-	std::cerr << "\n----------------------------------------KNN struct prepared  in " << now() - watch.back() << " seconds\n"; watch.push_back(now());
-	kn_solve(kn);
-	std::cerr << "\n----------------------------------------KNN precomputed in " << now() - watch.back() << " seconds\n"; watch.push_back(now());
-
-        kn_iterator *it = kn_begin_enum(kn); // retrieve neighbors, skip the point itself
-        for (int v=0; v<points.size()/3; v++) {
-            unsigned int knpt = kn_first_nearest_id(it,v);
-            int j = 0;
-            while (knpt!=UINT_MAX) {
-                if (v!=knpt) {
-                    neighbors[v*DEFAULT_NB_PLANES + j] = knpt;
-		    j++;
+	std::vector<int> neighbors;
+	std::vector<double> watch(1, now());
+	{
+		if (!load_file(argv[1], points)) {
+			std::cerr << argv[1] << ": could not load file" << std::endl;
+			return 1;
 		}
-                knpt = kn_next_nearest_id(it);
-            }
-            assert(j==DEFAULT_NB_PLANES);
-        }
+		int NBPTS = points.size() / 3;
+		points.resize(3 * NBPTS);
+		FOR(i, 3 * NBPTS) points[i] = double(rand()) / RAND_MAX;
+	}
 
-        // the data was re-ordered, so retreive it from the GPU
-        float *fp = kn_point(it, 0); 
-        for (int v=0; v<points.size(); v++) {
-            points[v] = fp[v];
-        }
-        kn_free(&kn);
-    }
+	{ // normalize point cloud between [0,1000]^3
+		float xmin, ymin, zmin, xmax, ymax, zmax;
+		get_bbox(points, xmin, ymin, zmin, xmax, ymax, zmax);
 
+		float maxside = std::max(std::max(xmax - xmin, ymax - ymin), zmax - zmin);
+		for (int i = 0; i < points.size() / 3; i++) {
+			points[i * 3 + 0] = (points[i * 3 + 0] - xmin) / maxside;
+			points[i * 3 + 1] = (points[i * 3 + 1] - ymin) / maxside;
+			points[i * 3 + 2] = (points[i * 3 + 2] - zmin) / maxside;
+		}
+		for (int i = 0; i < points.size(); i++) {
+			points[i] *= 1000.;
+		}
+		get_bbox(points, xmin, ymin, zmin, xmax, ymax, zmax);
+		std::cerr << "bbox [" << xmin << ":" << xmax << "], [" << ymin << ":" << ymax << ", [" << zmin << ":" << zmax << "]" << std::endl;
+	}
 
+	std::cerr << "\n----------------------------------------pointset loaded in " << now() - watch.back() << " seconds\n"; watch.push_back(now());
+
+	{ // solve kn problem
+		neighbors = std::vector<int>(points.size() / 3 * DEFAULT_NB_PLANES, -1);
+		std::cerr << "\n----------------------------------------memory for neig reserved in " << now() - watch.back() << " seconds\n"; watch.push_back(now());
+		kn_problem *kn = kn_prepare(points.data(), points.size() / 3);
+		std::cerr << "\n----------------------------------------KNN struct prepared  in " << now() - watch.back() << " seconds\n"; watch.push_back(now());
+		kn_solve(kn);
+		std::cerr << "\n----------------------------------------KNN precomputed in " << now() - watch.back() << " seconds\n"; watch.push_back(now());
+
+		kn_iterator *it = kn_begin_enum(kn); // retrieve neighbors, skip the point itself
+		for (int v = 0; v < points.size() / 3; v++) {
+			unsigned int knpt = kn_first_nearest_id(it, v);
+			int j = 0;
+			while (knpt != UINT_MAX) {
+				if (v != knpt) {
+					neighbors[v*DEFAULT_NB_PLANES + j] = knpt;
+					j++;
+				}
+				knpt = kn_next_nearest_id(it);
+			}
+			assert(j == DEFAULT_NB_PLANES);
+		}
+
+		// the data was re-ordered, so retreive it from the GPU
+		float *fp = kn_point(it, 0);
+		for (int v = 0; v < points.size(); v++) {
+			points[v] = fp[v];
+		}
+		kn_free(&kn);
+
+	kn_print_stats(kn);
+	kn_check_for_dupes(kn);
+
+	//        kn_sanity_check(kn); // very slow sanity checks
+}
 
 
     int nb_voro_cells =points.size() / 3;
@@ -192,6 +197,23 @@ int main(int argc, char** argv) {
 		    out << "4 "<<tets[offset + 4 * j] << " " << tets[offset + 4 * j + 1] << " " << tets[offset + 4 * j + 2] << " " << tets[offset + 4 * j + 3] << " \n";
 	    }
     }
+
+    { // re-check for dupes
+        for (int v=0; v<points.size()/3; v++) {
+            std::set<int> kns;
+            for (int i=0; i<DEFAULT_NB_PLANES; i++) {
+                int kni = neighbors[v*DEFAULT_NB_PLANES+i];
+                if (kni < UINT_MAX) {
+                    if (kns.find(kni) != kns.end()) {
+                        std::cerr << "ERROR duplicated entry for point " << v << std::endl;
+                        return 1;
+                    }
+                    kns.insert(kni);
+                }
+            }
+        }
+    }
+
 
     return 0;
 }

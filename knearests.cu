@@ -476,8 +476,73 @@ unsigned int *kn_get_knearests(kn_problem *kn)
 
 // ------------------------------------------------------------
 
-void kn_sanity_check(kn_problem *kn)
-{
+void kn_print_stats(kn_problem *kn) {
+  cudaError_t err = cudaSuccess;
+
+  int *counters = (int*)malloc(kn->dimx*kn->dimy*kn->dimz*sizeof(int));
+  err = cudaMemcpy(counters, kn->d_counters, kn->dimx*kn->dimy*kn->dimz*sizeof(int), cudaMemcpyDeviceToHost);
+  if (err != cudaSuccess) {
+    fprintf(stderr, "[kn_sanity_check:3] Failed to copy from device to host (error code %s)!\n", cudaGetErrorString(err));
+    exit(EXIT_FAILURE);
+  }
+
+  // stats on counters
+  int tot = 0;
+  int cmin = INT_MAX, cmax = 0;
+  std::map<int, int> histo;
+  for (int c = 0; c < kn->dimx*kn->dimy*kn->dimz; c++) {
+    histo[counters[c]]++;
+    cmin = min(cmin, counters[c]);
+    cmax = max(cmax, counters[c]);
+    tot += counters[c];
+  }
+  printf("Grid:  points per cell: %d (min), %d (max), %f avg, total %d\n", cmin, cmax, (kn->allocated_points-1) / (float)(kn->dimx*kn->dimy*kn->dimz), tot);
+  for (auto H : histo) {
+    fprintf(stderr, "[%d] => %d\n", H.first, H.second);
+  }
+  free(counters);
+}
+
+// ------------------------------------------------------------
+
+void kn_check_for_dupes(kn_problem *kn) {
+    cudaError_t err = cudaSuccess;
+
+    float *stored_points = (float*)malloc(kn->allocated_points * sizeof(float) * 3);
+    err = cudaMemcpy(stored_points, kn->d_stored_points, kn->allocated_points * sizeof(float) * 3, cudaMemcpyDeviceToHost);
+    if (err != cudaSuccess) {
+        fprintf(stderr, "[kn_sanity_check:1] Failed to copy from device to host (error code %s)!\n", cudaGetErrorString(err));
+        exit(EXIT_FAILURE);
+    }
+
+    unsigned int *knearests = (unsigned int*)malloc(kn->allocated_points * KN_global * sizeof(int));
+    err = cudaMemcpy(knearests, kn->d_knearests, kn->allocated_points * KN_global * sizeof(int), cudaMemcpyDeviceToHost);
+    if (err != cudaSuccess) {
+        fprintf(stderr, "[kn_sanity_check:2] Failed to copy from device to host (error code %s)!\n", cudaGetErrorString(err));
+        exit(EXIT_FAILURE);
+    }
+
+    for (int allp = 1; allp < kn->allocated_points; allp++) {
+        std::set<int> kns;
+        for (int i = 0; i < KN_global; ++i) {
+            int kni = knearests[allp + i*kn->allocated_points];
+            if (kni < UINT_MAX) {
+                if (kns.find(kni) != kns.end()) {
+                    fprintf(stderr, "ERROR duplicated entry %d\n", kni);
+                    exit(EXIT_FAILURE);
+                }
+                kns.insert(kni);
+            }
+        }
+    }
+
+    free(knearests);
+    free(stored_points);
+}
+
+// ------------------------------------------------------------
+
+void kn_sanity_check(kn_problem *kn) {
   cudaError_t err = cudaSuccess;
 
   float *stored_points = (float*)malloc(kn->allocated_points * sizeof(float) * 3);
@@ -506,21 +571,6 @@ void kn_sanity_check(kn_problem *kn)
   if (err != cudaSuccess) {
     fprintf(stderr, "[kn_sanity_check:4] Failed to copy from device to host (error code %s)!\n", cudaGetErrorString(err));
     exit(EXIT_FAILURE);
-  }
-
-  // stats on counters
-  int tot = 0;
-  int cmin = INT_MAX, cmax = 0;
-  std::map<int, int> histo;
-  for (int c = 0; c < kn->dimx*kn->dimy*kn->dimz; c++) {
-    histo[counters[c]]++;
-    cmin = min(cmin, counters[c]);
-    cmax = max(cmax, counters[c]);
-    tot += counters[c];
-  }
-  printf("Grid:  points per cell: %d (min), %d (max), %f avg, total %d\n", cmin, cmax, (kn->allocated_points-1) / (float)(kn->dimx*kn->dimy*kn->dimz), tot);
-  for (auto H : histo) {
-    fprintf(stderr, "[%d] => %d\n", H.first, H.second);
   }
 
   std::minstd_rand rnd;
@@ -616,7 +666,6 @@ void kn_sanity_check(kn_problem *kn)
   free(ptrs);
   free(counters);
   free(stored_points);
-
 }
 
 // ------------------------------------------------------------
