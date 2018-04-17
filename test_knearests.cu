@@ -67,13 +67,24 @@ void get_bbox(const std::vector<float>& xyz, float& xmin, float& ymin, float& zm
 }
 
 
-void voro_cell(int seed, float * pts, int* neigs, float bmin0, float bmin1, float bmin2, float bmax0, float bmax1, float bmax2, int *out_tets) {
+void voro_cell(int seed, float * pts, int* neigs, float bmin0, float bmin1, float bmin2, float bmax0, float bmax1, float bmax2, int *out_tets,bool verbose = false) {
 	//plop(seed); 
 	VBW::ConvexCell cc(seed, pts);
 	cc.init_with_box(bmin0, bmin1, bmin2, bmax0, bmax1, bmax2);
 
-	for (int v = 0; v < DEFAULT_NB_PLANES; v++) cc.clip_by_plane(neigs[DEFAULT_NB_PLANES * seed+v]);
-
+	if (verbose) {
+		plop(seed);
+		FOR(v, DEFAULT_NB_PLANES) 
+			std::cerr<<"   "<<neigs[DEFAULT_NB_PLANES * seed + v]
+			<< " \t\t" << pts[3 * neigs[DEFAULT_NB_PLANES * seed + v]]
+			<< "   " << pts[3 * neigs[DEFAULT_NB_PLANES * seed + v] +1]
+			<< "   " << pts[3 * neigs[DEFAULT_NB_PLANES * seed + v] +2]
+			<<"\n";
+	}
+	for (int v = 0; v < DEFAULT_NB_PLANES; v++) {
+		if (verbose)  plop(v);
+		cc.clip_by_plane(neigs[DEFAULT_NB_PLANES * seed + v]);
+	}
 	int t = cc.first_valid_;
 	int inc = 0;
 	while (t != VBW::END_OF_LIST) {
@@ -84,7 +95,7 @@ void voro_cell(int seed, float * pts, int* neigs, float bmin0, float bmin1, floa
 		}
 		t = int(cc.t_[t].next);
 	}
-
+	if (verbose)  plop(inc);
 }
 
 int main(int argc, char** argv) {
@@ -153,10 +164,10 @@ int main(int argc, char** argv) {
 		for (int v = 0; v < points.size(); v++) {
 			points[v] = fp[v];
 		}
-		kn_free(&kn);
 
 	kn_print_stats(kn);
 	kn_check_for_dupes(kn);
+	kn_free(&kn);
 
 	//        kn_sanity_check(kn); // very slow sanity checks
 }
@@ -166,9 +177,11 @@ int main(int argc, char** argv) {
     
     std::vector<int> tets(4*MAX_T* points.size() / 3,-1);
     watch.push_back(now());
+    std::cerr << "\n-----------------------------start voro\n" ;
     FOR(i, nb_voro_cells) {
 	    //if (i%100==0) 
-		    voro_cell(i, points.data(), neighbors.data(), 0, 0, 0, 1000, 1000, 1000, tets.data());
+	    //plop(i);
+		    voro_cell(i, points.data(), neighbors.data(), 0, 0, 0, 1000, 1000, 1000, tets.data(),i==1402);
     }
     std::cerr << "\n----------------------------------------Voro computed in " << now() - watch.back() << " seconds\n"; watch.push_back(now());
 

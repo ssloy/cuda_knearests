@@ -17,6 +17,10 @@
 #define KN_global        36 // int * KN_kernel
 #define POINTS_PER_BLOCK 64
 
+#include <iostream>
+#define plop(x) std::cerr << "    ->|plop|<-     "  << #x << x << std::endl
+
+
 // ------------------------------------------------------------
 
 __device__ int cellFromPoint(int xdim, int ydim, int zdim, float x, float y, float z)
@@ -428,7 +432,7 @@ void kn_solve(kn_problem *kn)
   cudaEventSynchronize(stop);
   float milliseconds = 0;
   cudaEventElapsedTime(&milliseconds, start, stop);
-  fprintf(stderr,"kn_solve: %f msec\n", milliseconds);
+  fprintf(stderr,"kn_solve: %f msec %d %d %d\n", milliseconds, kn->allocated_points, kn->dimx, kn->num_cell_offsets);
 }
 
 // ------------------------------------------------------------
@@ -478,7 +482,10 @@ unsigned int *kn_get_knearests(kn_problem *kn)
 
 void kn_print_stats(kn_problem *kn) {
   cudaError_t err = cudaSuccess;
-
+  plop(kn);
+  plop(kn->dimx);
+  plop(kn->dimy);
+  plop(kn->dimz);
   int *counters = (int*)malloc(kn->dimx*kn->dimy*kn->dimz*sizeof(int));
   err = cudaMemcpy(counters, kn->d_counters, kn->dimx*kn->dimy*kn->dimz*sizeof(int), cudaMemcpyDeviceToHost);
   if (err != cudaSuccess) {

@@ -12,15 +12,8 @@ static const int MAX_V = 35;
 static const int MAX_T = 45;
 
 
-inline std::string plop_unquote(const char* str) {
-	std::string result(str);
-	if (result.length() > 2 && result[0] == '\"' && result[result.length() - 1] == '\"') {
-		result = result.substr(1, result.length() - 2);
-	}
-	return result;
-}
 
-#define plop(x) std::cerr << "    ->|plop|<-     "  << #x << x << std::endl
+#define plop(x) std::cerr << "    ->|plop|<-     "  << #x <<"     "<< x << std::endl
 
 #define ALIGNED 
 //#define ALIGNED __attribute__((__aligned__(8))) Does not seem to change much.
