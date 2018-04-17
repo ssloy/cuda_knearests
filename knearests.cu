@@ -389,8 +389,11 @@ kn_problem *kn_prepare(float *points, int numpoints)
   kn_firstbuild(kn,d_points,numpoints);
 
   // we no longer need the initial points
-  cudaFree(d_points);
-
+  err = cudaFree(d_points);
+  if (err != cudaSuccess) {
+	  fprintf(stderr, "Failed (cudaFree(d_points)) with (error code %s)!\n", cudaGetErrorString(err));
+	  exit(EXIT_FAILURE);
+  }
   return kn;
 }
 
@@ -453,6 +456,8 @@ float *kn_get_points(kn_problem *kn)
     fprintf(stderr, "[kn_get_points] Failed to copy from device to host (error code %s)!\n", cudaGetErrorString(err));
     exit(EXIT_FAILURE);
   }
+
+
   return stored_points;
 }
 
@@ -476,7 +481,7 @@ void kn_sanity_check(kn_problem *kn)
   cudaError_t err = cudaSuccess;
 
   float *stored_points = (float*)malloc(kn->allocated_points * sizeof(float) * 3);
-  err = cudaMemcpy(stored_points, kn->d_stored_points, kn->allocated_points * sizeof(float) * 3, cudaMemcpyDeviceToHost);
+ err = cudaMemcpy(stored_points, kn->d_stored_points, kn->allocated_points * sizeof(float) * 3, cudaMemcpyDeviceToHost);
   if (err != cudaSuccess) {
     fprintf(stderr, "[kn_sanity_check:1] Failed to copy from device to host (error code %s)!\n", cudaGetErrorString(err));
     exit(EXIT_FAILURE);
