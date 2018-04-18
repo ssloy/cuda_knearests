@@ -1,4 +1,5 @@
 #include <vector>
+#include <algorithm>
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -6,6 +7,7 @@
 #include <set>
 
 #include "knearests.h"
+#include "kd_tree.h"
 
 bool load_file(const char* filename, std::vector<float>& xyz) {
     std::ifstream in;
@@ -66,7 +68,7 @@ int main(int argc, char** argv) {
     }
     
     std::vector<float> points;
-    const int DEFAULT_NB_PLANES = 35; // touche pas à ça
+    const int DEFAULT_NB_PLANES = 36; // touche pas à ça
     std::vector<int> neighbors;
 
     { // load point cloud file
@@ -97,7 +99,7 @@ int main(int argc, char** argv) {
     }
 
     { // solve kn problem
-        neighbors = std::vector<int>(points.size()/3*DEFAULT_NB_PLANES, -1);
+        std::vector<int> neighbors_perm = std::vector<int>(points.size()/3*DEFAULT_NB_PLANES, -1);
         kn_problem *kn = kn_prepare(points.data(), points.size()/3);
         kn_solve(kn);
 
@@ -106,43 +108,104 @@ int main(int argc, char** argv) {
             unsigned int knpt = kn_first_nearest_id(it,v);
             int j = 0;
             while (knpt!=UINT_MAX) {
-                if (v!=knpt) {
-                    neighbors[v*DEFAULT_NB_PLANES + j] = knpt;
-                    j++;
-                }
+                neighbors_perm[v*DEFAULT_NB_PLANES + j++] = knpt;
                 knpt = kn_next_nearest_id(it);
             }
             assert(j==DEFAULT_NB_PLANES);
         }
 
+/*
         // the data was re-ordered, so retreive it from the GPU
         float *fp = kn_point(it, 0); 
         for (int v=0; v<points.size(); v++) {
             points[v] = fp[v];
         }
+        */
         kn_print_stats(kn);
-        kn_check_for_dupes(kn);
 
-        kn_sanity_check(kn); // very slow sanity checks
+        int nb_points = points.size()/3;
+        std::vector<int> neighbors_tmp = std::vector<int>(neighbors_perm.size());
+        neighbors = std::vector<int>(neighbors_perm.size());
+        unsigned int *permutation = kn_get_permutation(kn);
+
+        for (int i=0; i<neighbors_perm.size(); i++) {
+            neighbors_tmp[i] = permutation[1+neighbors_perm[i]];
+        }
+        for (int i=0; i<nb_points; i++) {
+            for (int j=0; j<DEFAULT_NB_PLANES; j++) {
+                neighbors[permutation[1+i]*DEFAULT_NB_PLANES+j] = neighbors_tmp[i*DEFAULT_NB_PLANES+j];
+            }
+        }
+
+        { // sanity check for the permutation array
+            std::sort(permutation, permutation+nb_points+1);
+            assert(permutation[0]==0);
+            for (int i=0; i<nb_points-1; i++) {
+                assert(permutation[i]+1 == permutation[i+1]);
+            }
+        }
+        free(permutation);
+
+//        kn_sanity_check(kn); // very slow sanity checks
 
         kn_free(&kn);
     }
 
     { // re-check for dupes
+        std::cerr << "checking for dupes...";
+#pragma omp parallel for
         for (int v=0; v<points.size()/3; v++) {
             std::set<int> kns;
             for (int i=0; i<DEFAULT_NB_PLANES; i++) {
                 int kni = neighbors[v*DEFAULT_NB_PLANES+i];
                 if (kni < UINT_MAX) {
                     if (kns.find(kni) != kns.end()) {
-                        std::cerr << "ERROR duplicated entry for point " << v << std::endl;
-                        return 1;
+                        std::cerr << "ERROR: duplicated entry for point " << v << std::endl;
+                        break;
                     }
                     kns.insert(kni);
                 }
             }
         }
+        std::cerr << "ok" << std::endl;
     }
+
+    std::cerr << "Building KD-tree...";
+    int nb_points = points.size()/3;
+    std::vector<int> cpu_neighbors(nb_points*DEFAULT_NB_PLANES);
+    KdTree KD(3);
+    KD.set_points(nb_points, points.data());
+    std::cerr << "ok" << std::endl << "Querying the KD-tree...";
+
+#pragma omp parallel for
+    for (int v=0; v<nb_points; ++v) {
+        int neigh[DEFAULT_NB_PLANES+1];
+        float sq_dist[DEFAULT_NB_PLANES+1];	
+        KD.get_nearest_neighbors(DEFAULT_NB_PLANES+1,v,neigh,sq_dist);
+
+        for(int j=0; j<DEFAULT_NB_PLANES; ++j) {
+            cpu_neighbors[v*DEFAULT_NB_PLANES+j] = neigh[j+1];
+        }
+    }
+    std::cerr << "ok" << std::endl;
+
+    std::cerr << "Comparing CPU and GPU versions...";
+    for (int i=0; i<nb_points; i++) {
+        std::sort(    neighbors.begin()+i*DEFAULT_NB_PLANES,     neighbors.begin()+(i+1)*DEFAULT_NB_PLANES);
+        std::sort(cpu_neighbors.begin()+i*DEFAULT_NB_PLANES, cpu_neighbors.begin()+(i+1)*DEFAULT_NB_PLANES);
+    }
+    for (int i=0; i<nb_points; i++) {
+        for (int j=0; j<DEFAULT_NB_PLANES; j++) {
+            if (cpu_neighbors[i*DEFAULT_NB_PLANES+j]==neighbors[i*DEFAULT_NB_PLANES+j]) continue;
+            std::cerr << "Error in point " << i << " neigbor " << j << std::endl;
+            for (int k=0; k<DEFAULT_NB_PLANES; k++) {
+                std::cerr << cpu_neighbors[i*DEFAULT_NB_PLANES+k] << "-" << neighbors[i*DEFAULT_NB_PLANES+k] << std::endl;
+            }
+            assert(false);
+        }
+    }
+    std::cerr << "ok" << std::endl;
+
     return 0;
 }
 

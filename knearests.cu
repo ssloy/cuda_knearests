@@ -52,7 +52,7 @@ __global__ void reserve(int xdim, int ydim, int zdim, const int *counters, int *
 }
 
 // it supposes that counters buffer is set to zero
-__global__ void store(const float *points, int numPoints, int xdim, int ydim, int zdim, const int *ptrs, int *counters, int num_stored, float *stored_points) {
+__global__ void store(const float *points, int numPoints, int xdim, int ydim, int zdim, const int *ptrs, int *counters, int num_stored, float *stored_points, unsigned int *permutation) {
     int id = blockDim.x * blockIdx.x + threadIdx.x;
     if (id < numPoints) {
         float x = points[id*3+0];
@@ -60,6 +60,7 @@ __global__ void store(const float *points, int numPoints, int xdim, int ydim, in
         float z = points[id*3+2];
         int cell = cellFromPoint(xdim, ydim, zdim, x, y, z);
         int pos = ptrs[cell] + atomicAdd(counters + cell, 1);
+        permutation[pos] = id;
         stored_points[pos*3+0] = x;
         stored_points[pos*3+1] = y;
         stored_points[pos*3+2] = z;
@@ -91,7 +92,7 @@ __global__ void knearest(int xdim, int ydim, int zdim, int num_stored, const int
     float knearests_prev_max_d  = FLT_MAX;
 //    int   knearests_prev_max_id = INT_MAX;
 
-    for (int o=0; o<num_cell_offsets; o++)  {
+    for (int o=0; o<num_cell_offsets; o++) {
         float min_dist = cell_offset_distances[o];
         if (knearests_prev_max_d < min_dist) break;
 
@@ -100,6 +101,7 @@ __global__ void knearest(int xdim, int ydim, int zdim, int num_stored, const int
             int cell_base = ptrs[cell];
             int num = counters[cell];
             for (int ptr=cell_base; ptr<cell_base+num; ptr++) {
+                if (ptr==point_in) continue; // exclude the point itself from its neighbors
                 float x_cmp = stored_points[ptr*3 + 0];
                 float y_cmp = stored_points[ptr*3 + 1];
                 float z_cmp = stored_points[ptr*3 + 2];
@@ -140,6 +142,7 @@ typedef struct {
     int allocated_points;
     int *d_cell_offsets;         // cell offsets (sorted by rings), Nmax*Nmax*Nmax*Nmax (Nmax = 8)
     float *d_cell_offset_dists;
+    unsigned int *d_permutation;
     int *d_counters;             // counters per cell,   dimx*dimy*dimz
     int *d_ptrs;                 // cell start pointers, dimx*dimy*dimz
     int *d_globcounter;          // global allocation counter, 1
@@ -184,7 +187,7 @@ void kn_firstbuild(kn_problem *kn,float *d_points, int numpoints) {
         // call kernel
         int threadsPerBlock = 256;
         int blocksPerGrid = (numpoints + threadsPerBlock - 1) / threadsPerBlock;
-        store << <blocksPerGrid, threadsPerBlock >> >(d_points, numpoints, kn->dimx, kn->dimy, kn->dimz, kn->d_ptrs, kn->d_counters, kn->allocated_points, kn->d_stored_points);
+        store << <blocksPerGrid, threadsPerBlock >> >(d_points, numpoints, kn->dimx, kn->dimy, kn->dimz, kn->d_ptrs, kn->d_counters, kn->allocated_points, kn->d_stored_points, kn->d_permutation);
         err = cudaGetLastError();
         if (err != cudaSuccess) {
             std::cerr << "Failed  (error code " << cudaGetErrorString(err) << ")! [file: " << __FILE__ << ", line: " <<  __LINE__ << "]" << std::endl;
@@ -235,6 +238,7 @@ kn_problem *kn_prepare(float *points, int numpoints) {
     kn->K = KN_global;
     kn->allocated_points = numpoints + 1;
 
+    kn->d_permutation       = NULL;
     kn->d_cell_offsets      = NULL;
     kn->d_cell_offset_dists = NULL;
     kn->d_counters          = NULL;
@@ -320,6 +324,10 @@ kn_problem *kn_prepare(float *points, int numpoints) {
     memory_used += bufsize;
     gpuMallocNMemset((void **)&kn->d_knearests, 0xFF, bufsize); 
 
+    bufsize += kn->allocated_points*sizeof(int); // keep the track of reordering
+    memory_used += bufsize;
+    gpuMallocNMemset((void **)&kn->d_permutation, 0xFF, bufsize); 
+
     // construct initial structure
     kn_firstbuild(kn,d_points,numpoints);
 
@@ -378,15 +386,24 @@ void kn_free(kn_problem **kn) {
 
 // ------------------------------------------------------------
 
-float *kn_get_points(kn_problem *kn)
-{
-  float *stored_points = (float*)malloc(kn->allocated_points * sizeof(float) * 3);
-  cudaError_t err = cudaMemcpy(stored_points, kn->d_stored_points, kn->allocated_points * sizeof(float) * 3, cudaMemcpyDeviceToHost);
-  if (err != cudaSuccess) {
-    fprintf(stderr, "[kn_get_points] Failed to copy from device to host (error code %s)!\n", cudaGetErrorString(err));
-    exit(EXIT_FAILURE);
-  }
-  return stored_points;
+float *kn_get_points(kn_problem *kn) {
+    float *stored_points = (float*)malloc(kn->allocated_points * sizeof(float) * 3);
+    cudaError_t err = cudaMemcpy(stored_points, kn->d_stored_points, kn->allocated_points * sizeof(float) * 3, cudaMemcpyDeviceToHost);
+    if (err != cudaSuccess) {
+        fprintf(stderr, "[kn_get_points] Failed to copy from device to host (error code %s)!\n", cudaGetErrorString(err));
+        exit(EXIT_FAILURE);
+    }
+    return stored_points;
+}
+
+unsigned int *kn_get_permutation(kn_problem *kn) {
+    unsigned int *permutation = (unsigned int*)malloc(kn->allocated_points*sizeof(int));
+    cudaError_t err = cudaMemcpy(permutation, kn->d_permutation, kn->allocated_points * sizeof(int), cudaMemcpyDeviceToHost);
+    if (err != cudaSuccess) {
+        fprintf(stderr, "[kn_get_permutation] Failed to copy from device to host (error code %s)!\n", cudaGetErrorString(err));
+        exit(EXIT_FAILURE);
+    }
+    return permutation;
 }
 
 // ------------------------------------------------------------
@@ -431,171 +448,23 @@ void kn_print_stats(kn_problem *kn) {
     free(counters);
 }
 
+/*
 // ------------------------------------------------------------
 
-void kn_check_for_dupes(kn_problem *kn) {
-    cudaError_t err = cudaSuccess;
-
-    float *stored_points = (float*)malloc(kn->allocated_points * sizeof(float) * 3);
-    err = cudaMemcpy(stored_points, kn->d_stored_points, kn->allocated_points * sizeof(float) * 3, cudaMemcpyDeviceToHost);
-    if (err != cudaSuccess) {
-        fprintf(stderr, "[kn_sanity_check:1] Failed to copy from device to host (error code %s)!\n", cudaGetErrorString(err));
-        exit(EXIT_FAILURE);
-    }
-
-    unsigned int *knearests = (unsigned int*)malloc(kn->allocated_points * KN_global * sizeof(int));
-    err = cudaMemcpy(knearests, kn->d_knearests, kn->allocated_points * KN_global * sizeof(int), cudaMemcpyDeviceToHost);
-    if (err != cudaSuccess) {
-        fprintf(stderr, "[kn_sanity_check:2] Failed to copy from device to host (error code %s)!\n", cudaGetErrorString(err));
-        exit(EXIT_FAILURE);
-    }
+void kn_fetch_neighbors(kn_problem *kn, std::vector<int> &neighbors) {
+    unsigned int *knearests = kn_get_knearests(kn);
 
     for (int allp = 1; allp < kn->allocated_points; allp++) {
-        std::set<int> kns;
         for (int i = 0; i < KN_global; ++i) {
             int kni = knearests[allp + i*kn->allocated_points];
-            if (kni < UINT_MAX) {
-                if (kns.find(kni) != kns.end()) {
-                    fprintf(stderr, "ERROR duplicated entry %d\n", kni);
-                    exit(EXIT_FAILURE);
-                }
-                kns.insert(kni);
-            }
+            assert(kni!=UINT_MAX);
+            neighbors[kn->K*(kn->allocated_points-1)+allp-1] = kni-1;
         }
     }
 
     free(knearests);
-    free(stored_points);
 }
-
-// ------------------------------------------------------------
-
-void kn_sanity_check(kn_problem *kn) {
-  cudaError_t err = cudaSuccess;
-
-  float *stored_points = (float*)malloc(kn->allocated_points * sizeof(float) * 3);
-  err = cudaMemcpy(stored_points, kn->d_stored_points, kn->allocated_points * sizeof(float) * 3, cudaMemcpyDeviceToHost);
-  if (err != cudaSuccess) {
-    fprintf(stderr, "[kn_sanity_check:1] Failed to copy from device to host (error code %s)!\n", cudaGetErrorString(err));
-    exit(EXIT_FAILURE);
-  }
-
-  unsigned int *knearests = (unsigned int*)malloc(kn->allocated_points * KN_global * sizeof(int));
-  err = cudaMemcpy(knearests, kn->d_knearests, kn->allocated_points * KN_global * sizeof(int), cudaMemcpyDeviceToHost);
-  if (err != cudaSuccess) {
-    fprintf(stderr, "[kn_sanity_check:2] Failed to copy from device to host (error code %s)!\n", cudaGetErrorString(err));
-    exit(EXIT_FAILURE);
-  }
-
-  int *counters = (int*)malloc(kn->dimx*kn->dimy*kn->dimz*sizeof(int));
-  err = cudaMemcpy(counters, kn->d_counters, kn->dimx*kn->dimy*kn->dimz*sizeof(int), cudaMemcpyDeviceToHost);
-  if (err != cudaSuccess) {
-    fprintf(stderr, "[kn_sanity_check:3] Failed to copy from device to host (error code %s)!\n", cudaGetErrorString(err));
-    exit(EXIT_FAILURE);
-  }
-
-  int *ptrs = (int*)malloc(kn->dimx*kn->dimy*kn->dimz*sizeof(int));
-  err = cudaMemcpy(ptrs, kn->d_ptrs, kn->dimx*kn->dimy*kn->dimz*sizeof(int), cudaMemcpyDeviceToHost);
-  if (err != cudaSuccess) {
-    fprintf(stderr, "[kn_sanity_check:4] Failed to copy from device to host (error code %s)!\n", cudaGetErrorString(err));
-    exit(EXIT_FAILURE);
-  }
-
-  std::minstd_rand rnd;
-  int r = rnd();
-  for (int tests = 0; tests < kn->allocated_points-1; tests++) {
-    int allp = 1+((tests + r) % (kn->allocated_points-1));
-  // for (int allp = 1; allp < kn->allocated_points; allp++) {
-    //for (int allp = kn->allocated_points - 1; allp >= 0; allp--) {
-    fprintf(stderr, "%d/%d ", allp, kn->allocated_points);
-    float x = stored_points[allp * 3 + 0], y = stored_points[allp * 3 + 1], z = stored_points[allp * 3 + 2];
-    //if (x == 0.0f && y == 0.0f && z == 0.0f) continue;
-    // sanity check
-    std::set<int> kns;
-    for (int i = 0; i < KN_global; ++i) {
-      int kni = knearests[allp + i*kn->allocated_points];
-      if (kni < UINT_MAX) {
-        if (kns.find(kni) != kns.end()) {
-          for (int i = 0; i < KN_global; i++) {
-            int kni = knearests[allp + i*kn->allocated_points];
-            if (kni < UINT_MAX) {
-              float kx = stored_points[kni * 3 + 0];
-              float ky = stored_points[kni * 3 + 1];
-              float kz = stored_points[kni * 3 + 2];
-              int ci = (int)floor(kx*kn->dimx);
-              int cj = (int)floor(ky*kn->dimy);
-              int ck = (int)floor(kz*kn->dimz);
-              float d = (x - kx)*(x - kx) + (y - ky)*(y - ky) + (z - kz)*(z - kz);
-              fprintf(stderr, "   (%d) %d (%f,%f,%f) [%d,%d,%d] \t=> %f\n", i, kni, kx, ky, kz, ci, cj, ck, d);
-            }
-          }
-          fprintf(stderr, "ERROR duplicated entry %d\n", kni);
-          exit(EXIT_FAILURE);
-        }
-        kns.insert(kni);
-      }
-    }
-    // now brute force search
-    std::vector<std::pair<float, int> > kn_check;
-    for (int c = 1; c < kn->allocated_points; c++) {
-      float kx = stored_points[c * 3 + 0];
-      float ky = stored_points[c * 3 + 1];
-      float kz = stored_points[c * 3 + 2];
-      // if (kx == 0.0f && ky == 0.0f && kz == 0.0f) continue;
-      float d = (x - kx)*(x - kx) + (y - ky)*(y - ky) + (z - kz)*(z - kz);
-      kn_check.push_back(std::make_pair(d, c));
-      if (kn_check.size() > 100000) {
-        std::sort(kn_check.begin(), kn_check.end());
-        kn_check.resize(KN_global);
-      }
-    }
-    std::sort(kn_check.begin(), kn_check.end());
-    kn_check.resize(min((int)kn_check.size(),KN_global));
-    for (int k = 0; k < (int)kn_check.size(); k++) {
-      float kx = stored_points[kn_check[k].second * 3 + 0];
-      float ky = stored_points[kn_check[k].second * 3 + 1];
-      float kz = stored_points[kn_check[k].second * 3 + 2];
-      int ci = (int)floor(kx*kn->dimx);
-      int cj = (int)floor(ky*kn->dimy);
-      int ck = (int)floor(kz*kn->dimz);
-      if (kns.find(kn_check[k].second) == kns.end()) {
-        // dump current configuration
-        int pi = (int)floor(x*kn->dimx);
-        int pj = (int)floor(y*kn->dimy);
-        int pk = (int)floor(z*kn->dimz);
-        fprintf(stderr, "============== (%f,%f,%f) [%d,%d,%d] (counter:%d ptr:%d)\n",
-          x, y, z,
-          pi, pj, pk,
-          counters[pi + pj*kn->dimx + pk*kn->dimx*kn->dimy],
-          ptrs[pi + pj*kn->dimx + pk*kn->dimx*kn->dimy]);
-        for (int i = 0; i < KN_global; i++) {
-          int kni = knearests[allp + i*kn->allocated_points];
-          if (kni < UINT_MAX) {
-            float kx = stored_points[kni * 3 + 0];
-            float ky = stored_points[kni * 3 + 1];
-            float kz = stored_points[kni * 3 + 2];
-            int ci = (int)floor(kx*kn->dimx);
-            int cj = (int)floor(ky*kn->dimy);
-            int ck = (int)floor(kz*kn->dimz);
-            float d = (x - kx)*(x - kx) + (y - ky)*(y - ky) + (z - kz)*(z - kz);
-            fprintf(stderr, "   (%d) %d (%f,%f,%f) [%d,%d,%d] \t=> %f\n", i, kni, kx, ky, kz, ci, cj, ck, d);
-          }
-        }
-        fprintf(stderr, "ERROR cannot find knearest %d SANITY CHECK FAILED\n", kn_check[k].second);
-        float d = (x - kx)*(x - kx) + (y - ky)*(y - ky) + (z - kz)*(z - kz);
-        fprintf(stderr, "**** [%d] (%f,%f,%f) [%d,%d,%d]  %d => %f (%f)\n", k, kx, ky, kz, ci, cj, ck, kn_check[k].second, kn_check[k].first, d);
-        exit(EXIT_FAILURE);
-      }
-    }
-    fprintf(stderr, " [ok]\n");
-  }
-
-  free(knearests);
-  free(ptrs);
-  free(counters);
-  free(stored_points);
-}
-
+*/
 // ------------------------------------------------------------
 
 int kn_num_points(kn_problem *kn)
@@ -699,3 +568,4 @@ void          kn_end_enum(kn_iterator **it)
 }
 
 // ------------------------------------------------------------
+
