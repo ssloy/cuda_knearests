@@ -9,6 +9,36 @@
 #include "knearests.h"
 #include "kd_tree.h"
 
+#if defined(__linux__)
+#   include <sys/times.h>
+#endif
+
+class Stopwatch {
+    public:
+        Stopwatch(const char* taskname) :
+            taskname_(taskname), start_(now()) {
+                std::cout << taskname_ << "..." << std::endl;
+            }
+        ~Stopwatch() {
+            double elapsed = now() - start_;
+            std::cout << taskname_ << ": "
+                << elapsed << "s" << std::endl;
+        }
+        static double now() {
+#if defined(__linux__)
+            tms now_tms;
+            return double(times(&now_tms)) / 100.0;
+#elif defined(WIN32) || defined(_WIN64)
+            return double(GetTickCount()) / 1000.0;	    
+#else
+            return 0.0;
+#endif	    
+        }
+    private:
+        const char* taskname_;
+        double start_;
+};
+
 bool load_file(const char* filename, std::vector<float>& xyz) {
     std::ifstream in;
     in.open (filename, std::ifstream::in);
@@ -99,6 +129,8 @@ int main(int argc, char** argv) {
     }
 
     { // solve kn problem
+        Stopwatch W("knn gpu");
+
         std::vector<int> neighbors_perm = std::vector<int>(points.size()/3*DEFAULT_NB_PLANES, -1);
         kn_problem *kn = kn_prepare(points.data(), points.size()/3);
         kn_solve(kn);
@@ -174,21 +206,23 @@ int main(int argc, char** argv) {
     int nb_points = points.size()/3;
     std::vector<int> cpu_neighbors(nb_points*DEFAULT_NB_PLANES);
     KdTree KD(3);
-    KD.set_points(nb_points, points.data());
-    std::cerr << "ok" << std::endl << "Querying the KD-tree...";
+    {
+        Stopwatch W("Build kd-tree");
+        KD.set_points(nb_points, points.data());
+        std::cerr << "ok" << std::endl << "Querying the KD-tree...";
 
 #pragma omp parallel for
-    for (int v=0; v<nb_points; ++v) {
-        int neigh[DEFAULT_NB_PLANES+1];
-        float sq_dist[DEFAULT_NB_PLANES+1];	
-        KD.get_nearest_neighbors(DEFAULT_NB_PLANES+1,v,neigh,sq_dist);
+        for (int v=0; v<nb_points; ++v) {
+            int neigh[DEFAULT_NB_PLANES+1];
+            float sq_dist[DEFAULT_NB_PLANES+1];	
+            KD.get_nearest_neighbors(DEFAULT_NB_PLANES+1,v,neigh,sq_dist);
 
-        for(int j=0; j<DEFAULT_NB_PLANES; ++j) {
-            cpu_neighbors[v*DEFAULT_NB_PLANES+j] = neigh[j+1];
+            for(int j=0; j<DEFAULT_NB_PLANES; ++j) {
+                cpu_neighbors[v*DEFAULT_NB_PLANES+j] = neigh[j+1];
+            }
         }
+        std::cerr << "ok" << std::endl;
     }
-    std::cerr << "ok" << std::endl;
-
     std::cerr << "Comparing CPU and GPU versions...";
     for (int i=0; i<nb_points; i++) {
         std::sort(    neighbors.begin()+i*DEFAULT_NB_PLANES,     neighbors.begin()+(i+1)*DEFAULT_NB_PLANES);
