@@ -9,9 +9,24 @@
 //#undef NDEBUG
 //#include <windows.h>
 //#include <assert.h>
-#   include <windows.h>
 
-inline double now() { return double(GetTickCount()) / 1000.0; }
+#if defined(__linux__)
+#   include <sys/times.h>
+#elif defined(WIN32) || defined(_WIN64)
+#   include <windows.h>
+#endif
+
+inline double now() {
+#if defined(__linux__)
+    tms now_tms;
+    return double(times(&now_tms)) / 100.0;
+#elif defined(WIN32) || defined(_WIN64)
+    return double(GetTickCount()) / 1000.0;     
+#else
+    return 0.0;
+#endif      
+}
+
 
 
 
@@ -27,7 +42,11 @@ static const int MAX_T = 64;
 #define plop(x)  
 //#define plop(x) std::cerr << "    ->|plop|<-     "  << #x <<"     "<< x << std::endl
 
+#if defined(__linux__)
+#define cuda_check(x) ;
+#else
 #define cuda_check(x) if (x!=cudaSuccess) __debugbreak();
+#endif
 
 #define ALIGNED 
 //#define ALIGNED __attribute__((__aligned__(8))) Does not seem to change much.
