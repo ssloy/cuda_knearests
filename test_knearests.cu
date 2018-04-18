@@ -8,10 +8,7 @@
 #include <set>
 
 #include "knearests.h"
-#   include <windows.h>
 const int DEFAULT_NB_PLANES = 35; // touche pas à ça
-
-inline double now() {return double(GetTickCount()) / 1000.0;}
 
 
 bool load_file(const char* filename, std::vector<float>& xyz) {
@@ -67,36 +64,20 @@ void get_bbox(const std::vector<float>& xyz, float& xmin, float& ymin, float& zm
 }
 
 
-void voro_cell(int seed, float * pts, int* neigs, float bmin0, float bmin1, float bmin2, float bmax0, float bmax1, float bmax2, int *out_tets,bool verbose = false) {
-	//plop(seed); 
-	VBW::ConvexCell cc(seed, pts);
-	cc.init_with_box(bmin0, bmin1, bmin2, bmax0, bmax1, bmax2);
 
-	if (verbose) {
-		plop(seed);
-		FOR(v, DEFAULT_NB_PLANES) 
-			std::cerr<<"   "<<neigs[DEFAULT_NB_PLANES * seed + v]
-			<< " \t\t" << pts[3 * neigs[DEFAULT_NB_PLANES * seed + v]]
-			<< "   " << pts[3 * neigs[DEFAULT_NB_PLANES * seed + v] +1]
-			<< "   " << pts[3 * neigs[DEFAULT_NB_PLANES * seed + v] +2]
-			<<"\n";
+
+float dot_3d(float* v0, float* v1) { return v0[0] * v1[0] + v0[1] * v1[1] + v0[2] * v1[2]; }
+float length2_3d(float* v0) { return dot_3d(v0,v0); }
+struct Dist2SeedCmp {
+	Dist2SeedCmp(std::vector<float>& p_points, int p_seed) : points(p_points) { seed = p_seed; }
+	bool operator()(int id0, int id1) {
+		float v0[3];FOR(d, 3) v0[d]=points[3 * seed + d] - points[3 * id0 + d];
+		float v1[3];FOR(d, 3) v1[d] = points[3 * seed + d] - points[3 * id1 + d];
+		return length2_3d(&(v0[0])) < length2_3d(&(v1[0]));
 	}
-	for (int v = 0; v < DEFAULT_NB_PLANES; v++) {
-		if (verbose)  plop(v);
-		cc.clip_by_plane(neigs[DEFAULT_NB_PLANES * seed + v]);
-	}
-	int t = cc.first_valid_;
-	int inc = 0;
-	while (t != VBW::END_OF_LIST) {
-		if (cc.t_[t].i > 5 && cc.t_[t].j > 5 && cc.t_[t].k > 5) {
-			out_tets[seed*4 * MAX_T+ inc * 4] = cc.voro_id;
-			FOR(f, 3) out_tets[seed * 4 * MAX_T + inc * 4 + f + 1] = cc.vorother_id[cc.ith_plane(t, f) - 6];
-			inc++;
-		}
-		t = int(cc.t_[t].next);
-	}
-	if (verbose)  plop(inc);
-}
+	std::vector<float>& points;
+	int seed;
+};
 
 int main(int argc, char** argv) {
 	if (2 > argc) {
@@ -105,7 +86,6 @@ int main(int argc, char** argv) {
 	}
 
 	std::vector<float> points;
-
 	std::vector<int> neighbors;
 	std::vector<double> watch(1, now());
 	{
@@ -138,7 +118,7 @@ int main(int argc, char** argv) {
 	std::cerr << "\n----------------------------------------pointset loaded in " << now() - watch.back() << " seconds\n"; watch.push_back(now());
 
 	{ // solve kn problem
-		neighbors = std::vector<int>(points.size() / 3 * DEFAULT_NB_PLANES, -1);
+		neighbors = std::vector<int>(points.size() / 3 * DEFAULT_NB_PLANES+1, -1);
 		std::cerr << "\n----------------------------------------memory for neig reserved in " << now() - watch.back() << " seconds\n"; watch.push_back(now());
 		kn_problem *kn = kn_prepare(points.data(), points.size() / 3);
 		std::cerr << "\n----------------------------------------KNN struct prepared  in " << now() - watch.back() << " seconds\n"; watch.push_back(now());
@@ -173,16 +153,27 @@ int main(int argc, char** argv) {
 }
 
 
-    int nb_voro_cells =points.size() / 3;
-    
+	std::cerr << "\n-----------------------------sort neigs\n";
+	int nb_voro_cells = points.size() / 3;
+
+
+	FOR(i, nb_voro_cells) {
+		Dist2SeedCmp cmp(points,i);
+		std::sort(&(neighbors[i*DEFAULT_NB_PLANES]), &(neighbors[(i+1)*DEFAULT_NB_PLANES]),cmp);
+	}
+
+
+
     std::vector<int> tets(4*MAX_T* points.size() / 3,-1);
     watch.push_back(now());
     std::cerr << "\n-----------------------------start voro\n" ;
-    FOR(i, nb_voro_cells) {
-	    //if (i%100==0) 
-	    //plop(i);
-		    voro_cell(i, points.data(), neighbors.data(), 0, 0, 0, 1000, 1000, 1000, tets.data(),i==1402);
-    }
+
+
+
+
+    compute_voro_diagram(points.data(), points.size() / 3, neighbors.data(), 0, 0, 0, 1000, 1000, 1000, tets.data());
+    //FOR(i, nb_voro_cells) voro_cell(i, points.data(), points.size() / 3, neighbors.data(), 0, 0, 0, 1000, 1000, 1000, tets.data(),false);
+    
     std::cerr << "\n----------------------------------------Voro computed in " << now() - watch.back() << " seconds\n"; watch.push_back(now());
 
     int nb_real_tets = 0;
