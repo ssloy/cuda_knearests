@@ -43,7 +43,7 @@ static const int MAX_T = 64;
 //#define plop(x) std::cerr << "    ->|plop|<-     "  << #x <<"     "<< x << std::endl
 
 #if defined(__linux__)
-#define cuda_check(x) ;
+#define cuda_check(x)  if (x!=cudaSuccess) exit(1);
 #else
 #define cuda_check(x) if (x!=cudaSuccess) __debugbreak();
 #endif
