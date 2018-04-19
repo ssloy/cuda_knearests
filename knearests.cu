@@ -68,7 +68,7 @@ __global__ void store(const float *points, int numPoints, int xdim, int ydim, in
 }
 
 __global__ void knearest(int xdim, int ydim, int zdim, int num_stored, const int *ptrs, const int *counters, const float *stored_points, int num_cell_offsets, const int *cell_offsets, const float *cell_offset_distances, unsigned int *g_knearests) {
-    // each thread updates its k-nearests,
+    // each thread updates its k-nearests
     __shared__ unsigned int knearests      [KN_global*POINTS_PER_BLOCK];
     __shared__ float        knearests_dists[KN_global*POINTS_PER_BLOCK];
 
@@ -111,7 +111,7 @@ __global__ void knearest(int xdim, int ydim, int zdim, int num_stored, const int
                     // replace current max
                     knearests[offs + knearests_prev_max_k] = ptr;
                     knearests_dists[offs + knearests_prev_max_k] = d;
-                    // find out new max
+                    // find new max
                     knearests_prev_max_d = -1.0f;
 //                    knearests_prev_max_id = -1;
                     for (int k = 0; k < KN_global; k++) {
@@ -253,7 +253,7 @@ kn_problem *kn_prepare(float *points, int numpoints) {
 
     int Nmax = 8;
     if (sz < Nmax) {
-        std::cerr << "The current implementation does not support low number of input points" << std::endl;
+        std::cerr << "Current implementation does not support low number of input points" << std::endl;
         exit(EXIT_FAILURE);
     }
     // create cell offsets, very naive approach, should be fine, pre-computed once
@@ -383,13 +383,11 @@ void kn_free(kn_problem **kn) {
     *kn = NULL;
 }
 
-// ------------------------------------------------------------
-
 float *kn_get_points(kn_problem *kn) {
     float *stored_points = (float*)malloc(kn->allocated_points * sizeof(float) * 3);
     cudaError_t err = cudaMemcpy(stored_points, kn->d_stored_points, kn->allocated_points * sizeof(float) * 3, cudaMemcpyDeviceToHost);
     if (err != cudaSuccess) {
-        fprintf(stderr, "[kn_get_points] Failed to copy from device to host (error code %s)!\n", cudaGetErrorString(err));
+        std::cerr << "[kn_print_stats] Failed to copy from device to host (error code " << cudaGetErrorString(err) << ")!" << std::endl;
         exit(EXIT_FAILURE);
     }
     return stored_points;
@@ -399,26 +397,21 @@ unsigned int *kn_get_permutation(kn_problem *kn) {
     unsigned int *permutation = (unsigned int*)malloc(kn->allocated_points*sizeof(int));
     cudaError_t err = cudaMemcpy(permutation, kn->d_permutation, kn->allocated_points * sizeof(int), cudaMemcpyDeviceToHost);
     if (err != cudaSuccess) {
-        fprintf(stderr, "[kn_get_permutation] Failed to copy from device to host (error code %s)!\n", cudaGetErrorString(err));
+        std::cerr << "[kn_print_stats] Failed to copy from device to host (error code " << cudaGetErrorString(err) << ")!" << std::endl;
         exit(EXIT_FAILURE);
     }
     return permutation;
 }
 
-
-// ------------------------------------------------------------
-
 unsigned int *kn_get_knearests(kn_problem *kn) {
     unsigned int *knearests = (unsigned int*)malloc(kn->allocated_points * KN_global * sizeof(int));
     cudaError_t err = cudaMemcpy(knearests, kn->d_knearests, kn->allocated_points * KN_global * sizeof(int), cudaMemcpyDeviceToHost);
     if (err != cudaSuccess) {
-        fprintf(stderr, "[kn_get_knearests] Failed to copy from device to host (error code %s)!\n", cudaGetErrorString(err));
+        std::cerr << "[kn_print_stats] Failed to copy from device to host (error code " << cudaGetErrorString(err) << ")!" << std::endl;
         exit(EXIT_FAILURE);
     }
     return knearests;
 }
-
-// ------------------------------------------------------------
 
 void kn_print_stats(kn_problem *kn) {
     cudaError_t err = cudaSuccess;
@@ -446,6 +439,4 @@ void kn_print_stats(kn_problem *kn) {
     }
     free(counters);
 }
-
-// ------------------------------------------------------------
 

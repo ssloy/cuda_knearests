@@ -143,11 +143,13 @@ int main(int argc, char** argv) {
         }
     }
 
+/*
     int nb_pts = 10000000;
     points.resize(nb_pts*3);
     for (int i=0; i<points.size(); i++) {
         points[i] = rand()/(float)RAND_MAX;
     }
+*/
 
     { // normalize point cloud between [0,1000]^3
         float xmin,ymin,zmin,xmax,ymax,zmax;
