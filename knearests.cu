@@ -14,12 +14,12 @@
 
 // ------------------------------------------------------------
 
-#define KN_global        36 // int * KN_kernel
+#define KN_global        36
 #define POINTS_PER_BLOCK 64
 
 // ------------------------------------------------------------
 
-// it is supposed that all points are in range [0,1000]^3
+// it is supposed that all points fit in range [0,1000]^3
 __device__ int cellFromPoint(int xdim, int ydim, int zdim, float x, float y, float z) {
     int   i = (int)floor(x * (float)xdim / 1000.f);
     int   j = (int)floor(y * (float)ydim / 1000.f);
@@ -33,9 +33,9 @@ __device__ int cellFromPoint(int xdim, int ydim, int zdim, float x, float y, flo
 __global__ void count(const float *points, int numPoints, int xdim, int ydim, int zdim, int *counters) {
     int id = blockDim.x * blockIdx.x + threadIdx.x;
     if (id < numPoints) {
-        float x = points[id * 3 + 0];
-        float y = points[id * 3 + 1];
-        float z = points[id * 3 + 2];
+        float x = points[id*3 + 0];
+        float y = points[id*3 + 1];
+        float z = points[id*3 + 2];
         int cell = cellFromPoint(xdim, ydim, zdim, x, y, z);
         atomicAdd(counters + cell, 1);
     }
@@ -46,7 +46,7 @@ __global__ void reserve(int xdim, int ydim, int zdim, const int *counters, int *
     if (id < xdim*ydim*zdim) {
         int cnt = counters[id];
         if (cnt > 0) {
-            ptrs[id] = 1 + atomicAdd(globalcounter, cnt); // adding 1 so that null tags empty
+            ptrs[id] = atomicAdd(globalcounter, cnt);
         }
     }
 }
@@ -67,13 +67,12 @@ __global__ void store(const float *points, int numPoints, int xdim, int ydim, in
     }
 }
 
-// Launch one per page, grouped by page size
 __global__ void knearest(int xdim, int ydim, int zdim, int num_stored, const int *ptrs, const int *counters, const float *stored_points, int num_cell_offsets, const int *cell_offsets, const float *cell_offset_distances, unsigned int *g_knearests) {
     // each thread updates its k-nearests,
     __shared__ unsigned int knearests      [KN_global*POINTS_PER_BLOCK];
     __shared__ float        knearests_dists[KN_global*POINTS_PER_BLOCK];
 
-    int point_in = 1 + threadIdx.x + blockIdx.x*POINTS_PER_BLOCK;
+    int point_in = threadIdx.x + blockIdx.x*POINTS_PER_BLOCK;
     if (point_in >= num_stored) return;
 
     // point considered by this thread
@@ -236,7 +235,7 @@ void gpuMallocNMemset(void **ptr, int value, size_t size) {
 kn_problem *kn_prepare(float *points, int numpoints) {
     kn_problem *kn = (kn_problem*)malloc(sizeof(kn_problem));
     kn->K = KN_global;
-    kn->allocated_points = numpoints + 1;
+    kn->allocated_points = numpoints;
 
     kn->d_permutation       = NULL;
     kn->d_cell_offsets      = NULL;
@@ -406,17 +405,17 @@ unsigned int *kn_get_permutation(kn_problem *kn) {
     return permutation;
 }
 
+
 // ------------------------------------------------------------
 
-unsigned int *kn_get_knearests(kn_problem *kn)
-{
-  unsigned int *knearests = (unsigned int*)malloc(kn->allocated_points * KN_global * sizeof(int));
-  cudaError_t err = cudaMemcpy(knearests, kn->d_knearests, kn->allocated_points * KN_global * sizeof(int), cudaMemcpyDeviceToHost);
-  if (err != cudaSuccess) {
-    fprintf(stderr, "[kn_get_knearests] Failed to copy from device to host (error code %s)!\n", cudaGetErrorString(err));
-    exit(EXIT_FAILURE);
-  }
-  return knearests;
+unsigned int *kn_get_knearests(kn_problem *kn) {
+    unsigned int *knearests = (unsigned int*)malloc(kn->allocated_points * KN_global * sizeof(int));
+    cudaError_t err = cudaMemcpy(knearests, kn->d_knearests, kn->allocated_points * KN_global * sizeof(int), cudaMemcpyDeviceToHost);
+    if (err != cudaSuccess) {
+        fprintf(stderr, "[kn_get_knearests] Failed to copy from device to host (error code %s)!\n", cudaGetErrorString(err));
+        exit(EXIT_FAILURE);
+    }
+    return knearests;
 }
 
 // ------------------------------------------------------------
@@ -441,130 +440,11 @@ void kn_print_stats(kn_problem *kn) {
         cmax = max(cmax, counters[c]);
         tot += counters[c];
     }
-    std::cerr << "Grid:  points per cell: " << cmin << " (min), " << cmax << " (max), " << (kn->allocated_points-1)/(float)(kn->dimx*kn->dimy*kn->dimz) << " avg, total " << tot << std::endl;
+    std::cerr << "Grid:  points per cell: " << cmin << " (min), " << cmax << " (max), " << (kn->allocated_points)/(float)(kn->dimx*kn->dimy*kn->dimz) << " avg, total " << tot << std::endl;
     for (auto H : histo) {
         std::cerr << "[" << H.first << "] => " << H.second << std::endl;
     }
     free(counters);
-}
-
-/*
-// ------------------------------------------------------------
-
-void kn_fetch_neighbors(kn_problem *kn, std::vector<int> &neighbors) {
-    unsigned int *knearests = kn_get_knearests(kn);
-
-    for (int allp = 1; allp < kn->allocated_points; allp++) {
-        for (int i = 0; i < KN_global; ++i) {
-            int kni = knearests[allp + i*kn->allocated_points];
-            assert(kni!=UINT_MAX);
-            neighbors[kn->K*(kn->allocated_points-1)+allp-1] = kni-1;
-        }
-    }
-
-    free(knearests);
-}
-*/
-// ------------------------------------------------------------
-
-int kn_num_points(kn_problem *kn)
-{
-  return kn->allocated_points - 1;
-}
-
-
-// ------------------------------------------------------------
-
-typedef struct {
-  float        *points;
-  unsigned int *kns;
-  int           K;
-  int           allocated_points;
-  int           point_id;
-  int           k_rank;
-} kn_iterator;
-
-// ------------------------------------------------------------
-
-kn_iterator  *kn_begin_enum(kn_problem *kn)
-{
-  kn_iterator *it = (kn_iterator*)malloc(sizeof(kn_iterator));
-  it->K = kn->K;
-  it->points = kn_get_points(kn);
-  it->kns = kn_get_knearests(kn);
-  it->allocated_points = kn->allocated_points;
-  it->k_rank = -1;
-  it->point_id = -1;
-  return it;
-}
-
-// ------------------------------------------------------------
-
-float        *kn_point(kn_iterator *it,int point_id)
-{
-  return it->points + (point_id+1)*3;
-}
-
-// ------------------------------------------------------------
-
-float        *kn_first_nearest(kn_iterator *it, int point_id)
-{
-  it->point_id = point_id + 1;
-  it->k_rank = 0;
-  unsigned int kid = it->kns[it->point_id + it->k_rank*it->allocated_points];
-  if (kid < UINT_MAX) {
-    return it->points + kid*3;
-  } else {
-    return NULL;
-  }
-}
-
-// ------------------------------------------------------------
-
-unsigned int kn_first_nearest_id(kn_iterator *it, int point_id) {
-    it->point_id = point_id + 1;
-    it->k_rank = 0;
-    unsigned int kid = it->kns[it->point_id + it->k_rank*it->allocated_points];
-    if (kid<UINT_MAX && kid>0) {
-        return kid-1;
-    } 
-    return UINT_MAX;
-}
-
-// ------------------------------------------------------------
-
-float        *kn_next_nearest(kn_iterator *it)
-{
-  it->k_rank++;
-  if (it->k_rank >= it->K) return NULL;
-  unsigned int kid = it->kns[it->point_id + it->k_rank*it->allocated_points];
-  if (kid < UINT_MAX) {
-    return it->points + kid * 3;
-  } else {
-    return NULL;
-  }
-}
-
-// ------------------------------------------------------------
-
-unsigned int kn_next_nearest_id(kn_iterator *it) {
-    it->k_rank++;
-    if (it->k_rank >= it->K) return UINT_MAX;
-    unsigned int kid = it->kns[it->point_id + it->k_rank*it->allocated_points];
-    if (kid<UINT_MAX && kid>0) {
-        return kid-1;
-    } 
-    return UINT_MAX;
-}
-
-// ------------------------------------------------------------
-
-void          kn_end_enum(kn_iterator **it)
-{
-  free((*it)->points);
-  free((*it)->kns);
-  free(*it);
-  *it = NULL;
 }
 
 // ------------------------------------------------------------

@@ -91,49 +91,42 @@ void get_bbox(const std::vector<float>& xyz, float& xmin, float& ymin, float& zm
     zmax += d;
 }
 
-void printDevProp(cudaDeviceProp devProp) {
-    printf("Major revision number:         %d\n",  devProp.major);
-    printf("Minor revision number:         %d\n",  devProp.minor);
-    printf("Name:                          %s\n",  devProp.name);
-    printf("Total global memory:           %u\n",  devProp.totalGlobalMem);
-    printf("Total shared memory per block: %u\n",  devProp.sharedMemPerBlock);
-    printf("Total registers per block:     %d\n",  devProp.regsPerBlock);
-    printf("Warp size:                     %d\n",  devProp.warpSize);
-    printf("Maximum memory pitch:          %u\n",  devProp.memPitch);
-    printf("Maximum threads per block:     %d\n",  devProp.maxThreadsPerBlock);
-    for (int i = 0; i < 3; ++i)
-    printf("Maximum dimension %d of block:  %d\n", i, devProp.maxThreadsDim[i]);
-    for (int i = 0; i < 3; ++i)
-    printf("Maximum dimension %d of grid:   %d\n", i, devProp.maxGridSize[i]);
-    printf("Clock rate:                    %d\n",  devProp.clockRate);
-    printf("Total constant memory:         %u\n",  devProp.totalConstMem);
-    printf("Texture alignment:             %u\n",  devProp.textureAlignment);
-    printf("Concurrent copy and execution: %s\n",  (devProp.deviceOverlap ? "Yes" : "No"));
-    printf("Number of multiprocessors:     %d\n",  devProp.multiProcessorCount);
-    printf("Kernel execution timeout:      %s\n",  (devProp.kernelExecTimeoutEnabled ? "Yes" : "No"));
-    return;
+void printDevProp() {
+    int devCount; // Number of CUDA devices
+    cudaGetDeviceCount(&devCount);
+    printf("CUDA Device Query...\n");
+    printf("There are %d CUDA devices.\n", devCount);
+
+    // Iterate through devices
+    for (int i=0; i<devCount; ++i) {
+        // Get device properties
+        printf("\nCUDA Device #%d\n", i);
+        cudaDeviceProp devProp;
+        cudaGetDeviceProperties(&devProp, i);
+        printf("Major revision number:         %d\n",  devProp.major);
+        printf("Minor revision number:         %d\n",  devProp.minor);
+        printf("Name:                          %s\n",  devProp.name);
+        printf("Total global memory:           %u\n",  devProp.totalGlobalMem);
+        printf("Total shared memory per block: %u\n",  devProp.sharedMemPerBlock);
+        printf("Total registers per block:     %d\n",  devProp.regsPerBlock);
+        printf("Warp size:                     %d\n",  devProp.warpSize);
+        printf("Maximum memory pitch:          %u\n",  devProp.memPitch);
+        printf("Maximum threads per block:     %d\n",  devProp.maxThreadsPerBlock);
+        for (int i = 0; i < 3; ++i)
+            printf("Maximum dimension %d of block:  %d\n", i, devProp.maxThreadsDim[i]);
+        for (int i = 0; i < 3; ++i)
+            printf("Maximum dimension %d of grid:   %d\n", i, devProp.maxGridSize[i]);
+        printf("Clock rate:                    %d\n",  devProp.clockRate);
+        printf("Total constant memory:         %u\n",  devProp.totalConstMem);
+        printf("Texture alignment:             %u\n",  devProp.textureAlignment);
+        printf("Concurrent copy and execution: %s\n",  (devProp.deviceOverlap ? "Yes" : "No"));
+        printf("Number of multiprocessors:     %d\n",  devProp.multiProcessorCount);
+        printf("Kernel execution timeout:      %s\n",  (devProp.kernelExecTimeoutEnabled ? "Yes" : "No"));
+    }
 }
- 
 
 int main(int argc, char** argv) {
-    {
-        // Number of CUDA devices
-        int devCount;
-        cudaGetDeviceCount(&devCount);
-        printf("CUDA Device Query...\n");
-        printf("There are %d CUDA devices.\n", devCount);
-
-        // Iterate through devices
-        for (int i = 0; i < devCount; ++i)
-        {
-            // Get device properties
-            printf("\nCUDA Device #%d\n", i);
-            cudaDeviceProp devProp;
-            cudaGetDeviceProperties(&devProp, i);
-            printDevProp(devProp);
-        }
-
-    }
+    printDevProp();
     if (2>argc) {
         std::cerr << "Usage: " << argv[0] << " points.xyz" << std::endl;
         return 1;
@@ -148,9 +141,12 @@ int main(int argc, char** argv) {
             std::cerr << argv[1] << ": could not load file" << std::endl;
             return 1;
         }
-        for (int i=0; i<points.size(); i++) {
-            points[i] = rand()/(float)RAND_MAX;
-        }
+    }
+
+    int nb_pts = 10000000;
+    points.resize(nb_pts*3);
+    for (int i=0; i<points.size(); i++) {
+        points[i] = rand()/(float)RAND_MAX;
     }
 
     { // normalize point cloud between [0,1000]^3
@@ -158,70 +154,45 @@ int main(int argc, char** argv) {
         get_bbox(points, xmin, ymin, zmin, xmax, ymax, zmax);
 
         float maxside = std::max(std::max(xmax-xmin, ymax-ymin), zmax-zmin);
+#pragma omp parallel for
         for (int i=0; i<points.size()/3; i++) {
-            points[i*3+0] = (points[i*3+0]-xmin)/maxside;
-            points[i*3+1] = (points[i*3+1]-ymin)/maxside;
-            points[i*3+2] = (points[i*3+2]-zmin)/maxside;
-        }
-        for (int i=0; i<points.size(); i++) {
-            points[i] *= 1000.;
+            points[i*3+0] = 1000.*(points[i*3+0]-xmin)/maxside;
+            points[i*3+1] = 1000.*(points[i*3+1]-ymin)/maxside;
+            points[i*3+2] = 1000.*(points[i*3+2]-zmin)/maxside;
         }
         get_bbox(points, xmin, ymin, zmin, xmax, ymax, zmax);
         std::cerr << "bbox [" << xmin << ":" << xmax << "], [" << ymin << ":" << ymax << ", [" << zmin << ":" << zmax << "]" << std::endl;
     }
 
     { // solve kn problem
+        int nb_points = points.size()/3;
         Stopwatch W("knn gpu");
 
-        std::vector<int> neighbors_perm = std::vector<int>(points.size()/3*DEFAULT_NB_PLANES, -1);
-        kn_problem *kn = kn_prepare(points.data(), points.size()/3);
+        kn_problem *kn = kn_prepare(points.data(), nb_points);
         kn_solve(kn);
-
-        kn_iterator *it = kn_begin_enum(kn); // retrieve neighbors, skip the point itself
-        for (int v=0; v<points.size()/3; v++) {
-            unsigned int knpt = kn_first_nearest_id(it,v);
-            int j = 0;
-            while (knpt!=UINT_MAX) {
-                neighbors_perm[v*DEFAULT_NB_PLANES + j++] = knpt;
-                knpt = kn_next_nearest_id(it);
-            }
-            assert(j==DEFAULT_NB_PLANES);
-        }
-
-/*
-        // the data was re-ordered, so retreive it from the GPU
-        float *fp = kn_point(it, 0); 
-        for (int v=0; v<points.size(); v++) {
-            points[v] = fp[v];
-        }
-        */
         kn_print_stats(kn);
 
-        int nb_points = points.size()/3;
-        std::vector<int> neighbors_tmp = std::vector<int>(neighbors_perm.size());
-        neighbors = std::vector<int>(neighbors_perm.size());
+        unsigned int *knearests = kn_get_knearests(kn);
+
+        neighbors = std::vector<int>(nb_points*DEFAULT_NB_PLANES);
         unsigned int *permutation = kn_get_permutation(kn);
 
-        for (int i=0; i<neighbors_perm.size(); i++) {
-            neighbors_tmp[i] = permutation[1+neighbors_perm[i]];
-        }
+#pragma omp parallel for
         for (int i=0; i<nb_points; i++) {
             for (int j=0; j<DEFAULT_NB_PLANES; j++) {
-                neighbors[permutation[1+i]*DEFAULT_NB_PLANES+j] = neighbors_tmp[i*DEFAULT_NB_PLANES+j];
+                neighbors[permutation[i]*DEFAULT_NB_PLANES+j] = permutation[knearests[i + j*nb_points]];
             }
         }
 
-        { // sanity check for the permutation array
-            std::sort(permutation, permutation+nb_points+1);
+        if (1) { // sanity check for the permutation array
+            std::sort(permutation, permutation+nb_points);
             assert(permutation[0]==0);
             for (int i=0; i<nb_points-1; i++) {
                 assert(permutation[i]+1 == permutation[i+1]);
             }
         }
         free(permutation);
-
-//        kn_sanity_check(kn); // very slow sanity checks
-
+        free(knearests);
         kn_free(&kn);
     }
 
@@ -249,7 +220,7 @@ int main(int argc, char** argv) {
     std::vector<int> cpu_neighbors(nb_points*DEFAULT_NB_PLANES);
     KdTree KD(3);
     {
-        Stopwatch W("Build kd-tree");
+        Stopwatch W("knn cpu");
         KD.set_points(nb_points, points.data());
         std::cerr << "ok" << std::endl << "Querying the KD-tree...";
 
@@ -266,14 +237,16 @@ int main(int argc, char** argv) {
         std::cerr << "ok" << std::endl;
     }
     std::cerr << "Comparing CPU and GPU versions...";
+#pragma omp parallel for
     for (int i=0; i<nb_points; i++) {
         std::sort(    neighbors.begin()+i*DEFAULT_NB_PLANES,     neighbors.begin()+(i+1)*DEFAULT_NB_PLANES);
         std::sort(cpu_neighbors.begin()+i*DEFAULT_NB_PLANES, cpu_neighbors.begin()+(i+1)*DEFAULT_NB_PLANES);
     }
+#pragma omp parallel for
     for (int i=0; i<nb_points; i++) {
         for (int j=0; j<DEFAULT_NB_PLANES; j++) {
             if (cpu_neighbors[i*DEFAULT_NB_PLANES+j]==neighbors[i*DEFAULT_NB_PLANES+j]) continue;
-            std::cerr << "Error in point " << i << " neigbor " << j << std::endl;
+            std::cerr << "Error in point " << i << " neighbor " << j << std::endl;
             for (int k=0; k<DEFAULT_NB_PLANES; k++) {
                 std::cerr << cpu_neighbors[i*DEFAULT_NB_PLANES+k] << "-" << neighbors[i*DEFAULT_NB_PLANES+k] << std::endl;
             }
