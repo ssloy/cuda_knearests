@@ -8,4 +8,8 @@ if (OPENMP_FOUND)
     set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
 endif()
 
-cuda_add_executable(test_knearests knearests.h knearests.cu kd_tree.cpp test_knearests.cu)
+cuda_add_executable(
+        test_knearests knearests.h knearests.cu kd_tree.cpp test_knearests.cu
+        OPTIONS "-arch sm_61 -lineinfo"
+)
+

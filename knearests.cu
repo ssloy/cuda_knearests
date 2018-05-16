@@ -67,6 +67,10 @@ __global__ void store(const float *points, int numPoints, int xdim, int ydim, in
     }
 }
 
+template <typename T> __device__ void inline swap_test_device(T& a, T& b) {
+    T c(a); a=b; b=c;
+}
+
 __global__ void knearest(int xdim, int ydim, int zdim, int num_stored, const int *ptrs, const int *counters, const float *stored_points, int num_cell_offsets, const int *cell_offsets, const float *cell_offset_distances, unsigned int *g_knearests) {
     // each thread updates its k-nearests
     __shared__ unsigned int knearests      [KN_global*POINTS_PER_BLOCK];
@@ -87,13 +91,10 @@ __global__ void knearest(int xdim, int ydim, int zdim, int num_stored, const int
         knearests      [offs + i] = UINT_MAX;
         knearests_dists[offs + i] = FLT_MAX;
     }
-    int   knearests_prev_max_k  = 0;
-    float knearests_prev_max_d  = FLT_MAX;
-//    int   knearests_prev_max_id = INT_MAX;
 
     for (int o=0; o<num_cell_offsets; o++) {
         float min_dist = cell_offset_distances[o];
-        if (knearests_prev_max_d < min_dist) break;
+        if (knearests_dists[offs] < min_dist) break;
 
         int cell = cell_in + cell_offsets[o];
         if (cell>=0 && cell<xdim*ydim*zdim) {
@@ -107,19 +108,26 @@ __global__ void knearest(int xdim, int ydim, int zdim, int num_stored, const int
 
                 float d = (x_cmp - x)*(x_cmp - x) + (y_cmp - y)*(y_cmp - y) + (z_cmp - z)*(z_cmp - z);
 
-                if (d < knearests_prev_max_d/* || (d == knearests_prev_max_d && ptr < knearests_prev_max_id)*/) {
+                if (d < knearests_dists[offs]) {
                     // replace current max
-                    knearests[offs + knearests_prev_max_k] = ptr;
-                    knearests_dists[offs + knearests_prev_max_k] = d;
-                    // find new max
-                    knearests_prev_max_d = -1.0f;
-//                    knearests_prev_max_id = -1;
-                    for (int k = 0; k < KN_global; k++) {
-                        if (knearests_dists[offs + k] > knearests_prev_max_d /*|| (knearests_dists[offs + k] == knearests_prev_max_d && knearests[offs + k] > knearests_prev_max_id)*/) {
-                            knearests_prev_max_k = k;
-                            knearests_prev_max_d = knearests_dists[offs + k];
-//                            knearests_prev_max_id = knearests[offs + k];
+                    knearests[offs] = ptr;
+                    knearests_dists[offs] = d;
+
+                    int j = 0; // max-heapify
+                    while (true) { 
+                        int left  = 2*j+1;
+                        int right = 2*j+2;
+                        int largest = j;
+                        if (left<KN_global && knearests_dists[offs+left]>knearests_dists[offs+largest]) {
+                            largest = left;
                         }
+                        if (right<KN_global && knearests_dists[offs+right]>knearests_dists[offs+largest]) {
+                            largest = right;
+                        }
+                        if (largest==j) break;
+                        swap_test_device(knearests_dists[offs+j], knearests_dists[offs+largest]);
+                        swap_test_device(knearests      [offs+j], knearests      [offs+largest]);
+                        j = largest;
                     }
                 }
             } // pts inside the cell
