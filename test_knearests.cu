@@ -144,12 +144,13 @@ int main(int argc, char** argv) {
     }
 
 
-    int nb_pts = 1000000;
+/*
+    int nb_pts = 10000000;
     points.resize(nb_pts*3);
     for (int i=0; i<points.size(); i++) {
         points[i] = rand()/(float)RAND_MAX;
     }
-
+*/
     { // normalize point cloud between [0,1000]^3
         float xmin,ymin,zmin,xmax,ymax,zmax;
         get_bbox(points, xmin, ymin, zmin, xmax, ymax, zmax);
@@ -181,7 +182,7 @@ int main(int argc, char** argv) {
 #pragma omp parallel for
         for (int i=0; i<nb_points; i++) {
             for (int j=0; j<DEFAULT_NB_PLANES; j++) {
-                neighbors[permutation[i]*DEFAULT_NB_PLANES+j] = permutation[knearests[i + j*nb_points]];
+                neighbors[permutation[i]*DEFAULT_NB_PLANES+j] = permutation[knearests[i*DEFAULT_NB_PLANES + j]];
             }
         }
 

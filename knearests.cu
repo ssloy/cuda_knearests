@@ -14,7 +14,7 @@
 
 // ------------------------------------------------------------
 
-#define KN_global        36
+#define KN        36
 #define POINTS_PER_BLOCK 64
 
 // ------------------------------------------------------------
@@ -67,14 +67,14 @@ __global__ void store(const float *points, int numPoints, int xdim, int ydim, in
     }
 }
 
-template <typename T> __device__ void inline swap_test_device(T& a, T& b) {
+template <typename T> __device__ void inline swap_on_device(T& a, T& b) {
     T c(a); a=b; b=c;
 }
 
 __global__ void knearest(int xdim, int ydim, int zdim, int num_stored, const int *ptrs, const int *counters, const float *stored_points, int num_cell_offsets, const int *cell_offsets, const float *cell_offset_distances, unsigned int *g_knearests) {
     // each thread updates its k-nearests
-    __shared__ unsigned int knearests      [KN_global*POINTS_PER_BLOCK];
-    __shared__ float        knearests_dists[KN_global*POINTS_PER_BLOCK];
+    __shared__ unsigned int knearests      [KN*POINTS_PER_BLOCK];
+    __shared__ float        knearests_dists[KN*POINTS_PER_BLOCK];
 
     int point_in = threadIdx.x + blockIdx.x*POINTS_PER_BLOCK;
     if (point_in >= num_stored) return;
@@ -85,9 +85,9 @@ __global__ void knearest(int xdim, int ydim, int zdim, int num_stored, const int
     float z = stored_points[point_in*3 + 2];
 
     int cell_in = cellFromPoint(xdim, ydim, zdim, x, y, z);
-    int offs = threadIdx.x*KN_global;
+    int offs = threadIdx.x*KN;
 
-    for (int i = 0; i < KN_global; i++) {
+    for (int i = 0; i < KN; i++) {
         knearests      [offs + i] = UINT_MAX;
         knearests_dists[offs + i] = FLT_MAX;
     }
@@ -118,15 +118,15 @@ __global__ void knearest(int xdim, int ydim, int zdim, int num_stored, const int
                         int left  = 2*j+1;
                         int right = 2*j+2;
                         int largest = j;
-                        if (left<KN_global && knearests_dists[offs+left]>knearests_dists[offs+largest]) {
+                        if (left<KN && knearests_dists[offs+left]>knearests_dists[offs+largest]) {
                             largest = left;
                         }
-                        if (right<KN_global && knearests_dists[offs+right]>knearests_dists[offs+largest]) {
+                        if (right<KN && knearests_dists[offs+right]>knearests_dists[offs+largest]) {
                             largest = right;
                         }
                         if (largest==j) break;
-                        swap_test_device(knearests_dists[offs+j], knearests_dists[offs+largest]);
-                        swap_test_device(knearests      [offs+j], knearests      [offs+largest]);
+                        swap_on_device(knearests_dists[offs+j], knearests_dists[offs+largest]);
+                        swap_on_device(knearests      [offs+j], knearests      [offs+largest]);
                         j = largest;
                     }
                 }
@@ -135,8 +135,9 @@ __global__ void knearest(int xdim, int ydim, int zdim, int num_stored, const int
     } // cell offsets
 
     // store result
-    for (int i = 0; i < KN_global; i++) {
-        g_knearests[point_in + i*num_stored] = knearests[offs + i];
+    for (int i = 0; i < KN; i++) {
+//        g_knearests[point_in + i*num_stored] = knearests[offs+KN-1-i];
+        g_knearests[point_in*KN + i] = knearests[offs+KN-1-i];
     }
 }
 
@@ -154,7 +155,7 @@ typedef struct {
     int *d_ptrs;                 // cell start pointers, dimx*dimy*dimz
     int *d_globcounter;          // global allocation counter, 1
     float *d_stored_points;      // input points sorted, numpoints + 1
-    unsigned int *d_knearests;   // knn, allocated_points * KN_global
+    unsigned int *d_knearests;   // knn, allocated_points * KN
 } kn_problem;
 
 // ------------------------------------------------------------
@@ -178,7 +179,7 @@ void kn_firstbuild(kn_problem *kn,float *d_points, int numpoints) {
     }
 
     { // reserve memory for stored points
-        int threadsPerBlock = 256;
+        int threadsPerBlock = 4; // prolly even 1
         int blocksPerGrid = (kn->dimx*kn->dimy*kn->dimz + threadsPerBlock - 1) / threadsPerBlock;
         reserve << <blocksPerGrid, threadsPerBlock >> >(kn->dimx, kn->dimy, kn->dimz, kn->d_counters, kn->d_globcounter, kn->d_ptrs);
         err = cudaGetLastError();
@@ -242,7 +243,7 @@ void gpuMallocNMemset(void **ptr, int value, size_t size) {
 
 kn_problem *kn_prepare(float *points, int numpoints) {
     kn_problem *kn = (kn_problem*)malloc(sizeof(kn_problem));
-    kn->K = KN_global;
+    kn->K = KN;
     kn->allocated_points = numpoints;
 
     kn->d_permutation       = NULL;
@@ -254,7 +255,7 @@ kn_problem *kn_prepare(float *points, int numpoints) {
     kn->d_stored_points     = NULL;
     kn->d_knearests         = NULL;
 
-    int sz = max(1,(int)round(pow(numpoints / 11.3f, 1.0f / 3.0)));
+    int sz = max(1,(int)round(pow(numpoints / 5.1f, 1.0f / 3.0)));
     kn->dimx = sz;
     kn->dimy = sz;
     kn->dimz = sz;
@@ -327,7 +328,7 @@ kn_problem *kn_prepare(float *points, int numpoints) {
     memory_used += bufsize;
     gpuMallocNMemset((void **)&kn->d_stored_points, 0x00, bufsize); 
 
-    bufsize += kn->allocated_points*KN_global*sizeof(int);
+    bufsize += kn->allocated_points*KN*sizeof(int);
     memory_used += bufsize;
     gpuMallocNMemset((void **)&kn->d_knearests, 0xFF, bufsize); 
 
@@ -387,6 +388,7 @@ void kn_free(kn_problem **kn) {
     cudaFree((*kn)->d_globcounter);
     cudaFree((*kn)->d_stored_points);
     cudaFree((*kn)->d_knearests);
+    cudaFree((*kn)->d_permutation);
     free(*kn);
     *kn = NULL;
 }
@@ -412,8 +414,8 @@ unsigned int *kn_get_permutation(kn_problem *kn) {
 }
 
 unsigned int *kn_get_knearests(kn_problem *kn) {
-    unsigned int *knearests = (unsigned int*)malloc(kn->allocated_points * KN_global * sizeof(int));
-    cudaError_t err = cudaMemcpy(knearests, kn->d_knearests, kn->allocated_points * KN_global * sizeof(int), cudaMemcpyDeviceToHost);
+    unsigned int *knearests = (unsigned int*)malloc(kn->allocated_points * KN * sizeof(int));
+    cudaError_t err = cudaMemcpy(knearests, kn->d_knearests, kn->allocated_points * KN * sizeof(int), cudaMemcpyDeviceToHost);
     if (err != cudaSuccess) {
         std::cerr << "[kn_print_stats] Failed to copy from device to host (error code " << cudaGetErrorString(err) << ")!" << std::endl;
         exit(EXIT_FAILURE);
