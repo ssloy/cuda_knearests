@@ -39,33 +39,6 @@ class Stopwatch {
         double start_;
 };
 
-bool load_file(const char* filename, std::vector<float>& xyz) {
-    std::ifstream in;
-    in.open (filename, std::ifstream::in);
-    if (in.fail()) return false;
-    std::string line;
-    int npts = 0;
-    bool firstline = true;
-    float x,y,z;
-    while (!in.eof()) {
-        std::getline(in, line);
-        if (!line.length()) continue;
-        std::istringstream iss(line.c_str());
-        if (firstline) {
-            iss >> npts;
-            firstline = false;
-        } else {
-            iss >> x >> y >> z;
-            xyz.push_back(x);
-            xyz.push_back(y);
-            xyz.push_back(z);
-        }
-    }
-    assert(xyz.size() == npts*3);
-    in.close();
-    return true;
-}
-
 void get_bbox(const std::vector<float>& xyz, float& xmin, float& ymin, float& zmin, float& xmax, float& ymax, float& zmax) {
     int nb_v = xyz.size()/3;
     xmin = xmax = xyz[0];
@@ -90,6 +63,49 @@ void get_bbox(const std::vector<float>& xyz, float& xmin, float& ymin, float& zm
     ymax += d;
     zmax += d;
 }
+
+bool load_file(const char* filename, std::vector<float>& xyz, bool normalize=true) {
+    std::ifstream in;
+    in.open(filename, std::ifstream::in);
+    if (in.fail()) return false;
+    std::string line;
+    int npts = 0;
+    bool firstline = true;
+    float x,y,z;
+    while (!in.eof()) {
+        std::getline(in, line);
+        if (!line.length()) continue;
+        std::istringstream iss(line.c_str());
+        if (firstline) {
+            iss >> npts;
+            firstline = false;
+        } else {
+            iss >> x >> y >> z;
+            xyz.push_back(x);
+            xyz.push_back(y);
+            xyz.push_back(z);
+        }
+    }
+    assert(xyz.size() == npts*3);
+    in.close();
+
+    if (normalize) { // normalize point cloud between [0,1000]^3
+        float xmin,ymin,zmin,xmax,ymax,zmax;
+        get_bbox(xyz, xmin, ymin, zmin, xmax, ymax, zmax);
+
+        float maxside = std::max(std::max(xmax-xmin, ymax-ymin), zmax-zmin);
+#pragma omp parallel for
+        for (int i=0; i<xyz.size()/3; i++) {
+            xyz[i*3+0] = 1000.*(xyz[i*3+0]-xmin)/maxside;
+            xyz[i*3+1] = 1000.*(xyz[i*3+1]-ymin)/maxside;
+            xyz[i*3+2] = 1000.*(xyz[i*3+2]-zmin)/maxside;
+        }
+        get_bbox(xyz, xmin, ymin, zmin, xmax, ymax, zmax);
+        std::cerr << "bbox [" << xmin << ":" << xmax << "], [" << ymin << ":" << ymax << ", [" << zmin << ":" << zmax << "]" << std::endl;
+    }
+    return true;
+}
+
 
 void printDevProp() {
     int devCount; // Number of CUDA devices
@@ -141,29 +157,6 @@ int main(int argc, char** argv) {
             std::cerr << argv[1] << ": could not load file" << std::endl;
             return 1;
         }
-    }
-
-
-/*
-    int nb_pts = 10000000;
-    points.resize(nb_pts*3);
-    for (int i=0; i<points.size(); i++) {
-        points[i] = rand()/(float)RAND_MAX;
-    }
-*/
-    { // normalize point cloud between [0,1000]^3
-        float xmin,ymin,zmin,xmax,ymax,zmax;
-        get_bbox(points, xmin, ymin, zmin, xmax, ymax, zmax);
-
-        float maxside = std::max(std::max(xmax-xmin, ymax-ymin), zmax-zmin);
-#pragma omp parallel for
-        for (int i=0; i<points.size()/3; i++) {
-            points[i*3+0] = 1000.*(points[i*3+0]-xmin)/maxside;
-            points[i*3+1] = 1000.*(points[i*3+1]-ymin)/maxside;
-            points[i*3+2] = 1000.*(points[i*3+2]-zmin)/maxside;
-        }
-        get_bbox(points, xmin, ymin, zmin, xmax, ymax, zmax);
-        std::cerr << "bbox [" << xmin << ":" << xmax << "], [" << ymin << ":" << ymax << ", [" << zmin << ":" << zmax << "]" << std::endl;
     }
 
     { // solve kn problem
