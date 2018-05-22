@@ -4,40 +4,15 @@
 #include <fstream>
 #include <sstream>
 #include <cassert>
-#include <set>
 
-#include "knearests.h"
-#include "kd_tree.h"
+#define DEFAULT_NB_PLANES 35
+#define MAX_CLIPS  41
+#define MAX_T  64
 
-#if defined(__linux__)
-#   include <sys/times.h>
-#endif
+#include "VBW.h"
+#include "stopwatch.h"
 
-class Stopwatch {
-    public:
-        Stopwatch(const char* taskname) :
-            taskname_(taskname), start_(now()) {
-                std::cout << taskname_ << "..." << std::endl;
-            }
-        ~Stopwatch() {
-            double elapsed = now() - start_;
-            std::cout << taskname_ << ": "
-                << elapsed << "s" << std::endl;
-        }
-        static double now() {
-#if defined(__linux__)
-            tms now_tms;
-            return double(times(&now_tms)) / 100.0;
-#elif defined(WIN32) || defined(_WIN64)
-            return double(GetTickCount()) / 1000.0;	    
-#else
-            return 0.0;
-#endif	    
-        }
-    private:
-        const char* taskname_;
-        double start_;
-};
+
 
 void get_bbox(const std::vector<float>& xyz, float& xmin, float& ymin, float& zmin, float& xmax, float& ymax, float& zmax) {
     int nb_v = xyz.size()/3;
@@ -106,6 +81,14 @@ bool load_file(const char* filename, std::vector<float>& xyz, bool normalize=tru
     return true;
 }
 
+void export_tet_mesh(float* pts, int nb_pts, int* tets, int nb_tets){
+    Stopwatch W("output out.tet");
+    std::ofstream out("C:\\DATA\\out.tet");
+    out << nb_pts << " vertices" << std::endl;
+    out << nb_tets << " tets" << std::endl;
+    FOR(v, nb_pts)   out << pts[3 * v] << " " << pts[3 * v + 1] << " " << pts[3 * v + 2] << std::endl;
+    FOR(j, nb_tets)  out << "4 " << tets[4 * j] << " " << tets[4 * j + 1] << " " << tets[4 * j + 2] << " " << tets[4 * j + 3] << " \n";
+}
 
 void printDevProp() {
     int devCount; // Number of CUDA devices
@@ -148,109 +131,44 @@ int main(int argc, char** argv) {
         return 1;
     }
     
-    std::vector<float> points;
-    const int DEFAULT_NB_PLANES = 36; // touche pas à ça
-    std::vector<int> neighbors;
+    std::vector<float> pts;
 
-    { // load point cloud file
-        if (!load_file(argv[1], points)) {
-            std::cerr << argv[1] << ": could not load file" << std::endl;
-            return 1;
-        }
+    if (!load_file(argv[1], pts)) {
+        std::cerr << argv[1] << ": could not load file" << std::endl;
+        return 1;
     }
 
-    { // solve kn problem
-        int nb_points = points.size()/3;
-        Stopwatch W("knn gpu");
-
-        kn_problem *kn = kn_prepare(points.data(), nb_points);
-        kn_solve(kn);
-        kn_print_stats(kn);
-
-        unsigned int *knearests = kn_get_knearests(kn);
-
-        neighbors = std::vector<int>(nb_points*DEFAULT_NB_PLANES);
-        unsigned int *permutation = kn_get_permutation(kn);
-
-#pragma omp parallel for
-        for (int i=0; i<nb_points; i++) {
-            for (int j=0; j<DEFAULT_NB_PLANES; j++) {
-                neighbors[permutation[i]*DEFAULT_NB_PLANES+j] = permutation[knearests[i*DEFAULT_NB_PLANES + j]];
-            }
-        }
-
-        if (1) { // sanity check for the permutation array
-            std::sort(permutation, permutation+nb_points);
-            assert(permutation[0]==0);
-            for (int i=0; i<nb_points-1; i++) {
-                assert(permutation[i]+1 == permutation[i+1]);
-            }
-        }
-        free(permutation);
-        free(knearests);
-        kn_free(&kn);
-    }
-
-    { // re-check for dupes
-        std::cerr << "checking for dupes...";
-#pragma omp parallel for
-        for (int v=0; v<points.size()/3; v++) {
-            std::set<int> kns;
-            for (int i=0; i<DEFAULT_NB_PLANES; i++) {
-                int kni = neighbors[v*DEFAULT_NB_PLANES+i];
-                if (kni < UINT_MAX) {
-                    if (kns.find(kni) != kns.end()) {
-                        std::cerr << "ERROR: duplicated entry for point " << v << std::endl;
-                        break;
-                    }
-                    kns.insert(kni);
+/*
+    int n=216;
+    pts.resize(n*n*n*3);
+    for (int x=0; x<n; x++) {
+        for (int y=0; y<n; y++) {
+            for (int z=0; z<n; z++) {
+                float noise[3] = {0.};
+                for (int i=0; i<3; i++) {
+                    noise[i] = 3.*static_cast<float>(rand())/static_cast<float>(RAND_MAX);
                 }
+                pts[(x+y*n+z*n*n)*3+0] = x/static_cast<float>(n)*1000. + noise[0];
+                pts[(x+y*n+z*n*n)*3+1] = y/static_cast<float>(n)*1000. + noise[1];
+                pts[(x+y*n+z*n*n)*3+2] = z/static_cast<float>(n)*1000. + noise[2];
             }
         }
-        std::cerr << "ok" << std::endl;
     }
-//    return 0;
+*/
 
-    std::cerr << "Building KD-tree...";
-    int nb_points = points.size()/3;
-    std::vector<int> cpu_neighbors(nb_points*DEFAULT_NB_PLANES);
-    KdTree KD(3);
+    int nb_pts = pts.size()/3;
+    std::vector<int> tets(nb_pts * 4 * 50);
+    int nb_tets = 0;
+
     {
-        Stopwatch W("knn cpu");
-        KD.set_points(nb_points, points.data());
-        std::cerr << "ok" << std::endl << "Querying the KD-tree...";
-
-#pragma omp parallel for
-        for (int v=0; v<nb_points; ++v) {
-            int neigh[DEFAULT_NB_PLANES+1];
-            float sq_dist[DEFAULT_NB_PLANES+1];	
-            KD.get_nearest_neighbors(DEFAULT_NB_PLANES+1,v,neigh,sq_dist);
-
-            for(int j=0; j<DEFAULT_NB_PLANES; ++j) {
-                cpu_neighbors[v*DEFAULT_NB_PLANES+j] = neigh[j+1];
-            }
-        }
-        std::cerr << "ok" << std::endl;
+        Stopwatch W("Compute Voro... may test different things cpu/gpu/etc.");
+        compute_voro_diagram(pts,  tets, nb_tets);
     }
-    std::cerr << "Comparing CPU and GPU versions...";
-#pragma omp parallel for
-    for (int i=0; i<nb_points; i++) {
-        std::sort(    neighbors.begin()+i*DEFAULT_NB_PLANES,     neighbors.begin()+(i+1)*DEFAULT_NB_PLANES);
-        std::sort(cpu_neighbors.begin()+i*DEFAULT_NB_PLANES, cpu_neighbors.begin()+(i+1)*DEFAULT_NB_PLANES);
-    }
-#pragma omp parallel for
-    for (int i=0; i<nb_points; i++) {
-        for (int j=0; j<DEFAULT_NB_PLANES; j++) {
-            if (cpu_neighbors[i*DEFAULT_NB_PLANES+j]==neighbors[i*DEFAULT_NB_PLANES+j]) continue;
-            std::cerr << "Error in point " << i << " neighbor " << j << std::endl;
-            for (int k=0; k<DEFAULT_NB_PLANES; k++) {
-                std::cerr << cpu_neighbors[i*DEFAULT_NB_PLANES+k] << "-" << neighbors[i*DEFAULT_NB_PLANES+k] << std::endl;
-            }
-            assert(false);
-        }
-    }
-    std::cerr << "ok" << std::endl;
+/*    std::cerr << "nb tets: " << nb_tets << std::endl;
 
+    std::cerr << "EXPORT" << std::endl;
+    export_tet_mesh(pts.data(),nb_pts, tets.data(), nb_tets);
+*/
     return 0;
 }
 

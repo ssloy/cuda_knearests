@@ -1,7 +1,24 @@
 // Sylvain Lefebvre 2017-10-04
 #pragma once
 
-struct kn_problem;
+//struct kn_problem;
+typedef struct {
+    int K;
+    int dimx, dimy, dimz;
+    int num_cell_offsets;
+    int allocated_points;
+    int *d_cell_offsets;         // cell offsets (sorted by rings), Nmax*Nmax*Nmax*Nmax (Nmax = 8)
+    float *d_cell_offset_dists;
+    unsigned int *d_permutation;
+    int *d_counters;             // counters per cell,   dimx*dimy*dimz
+    int *d_ptrs;                 // cell start pointers, dimx*dimy*dimz
+    int *d_globcounter;          // global allocation counter, 1
+    float *d_stored_points;      // input points sorted, numpoints + 1
+    unsigned int *d_knearests;   // knn, allocated_points * KN
+} kn_problem;
+
+// ------------------------------------------------------------
+
 
 kn_problem   *kn_prepare(float *points, int numpoints);
 void          kn_solve(kn_problem *kn);

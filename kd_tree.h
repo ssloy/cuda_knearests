@@ -4,6 +4,7 @@
 #include <vector>
 #include <cassert>
 #include <limits>
+#include <algorithm>
 
 class KdTree {
     public:
