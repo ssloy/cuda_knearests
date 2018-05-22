@@ -157,7 +157,7 @@ int main(int argc, char** argv) {
 */
 
     int nb_pts = pts.size()/3;
-    std::vector<int> tets(nb_pts * 4 * 50);
+    std::vector<int> tets(0);//nb_pts * 4 * 50);
     int nb_tets = 0;
 
     {

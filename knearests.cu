@@ -138,7 +138,6 @@ __global__ void knearest(int xdim, int ydim, int zdim, int num_stored, const int
 
     // store result
     for (int i = 0; i < DEFAULT_NB_PLANES; i++) {
-//        g_knearests[point_in + i*num_stored] = knearests[offs+DEFAULT_NB_PLANES-1-i];
         g_knearests[point_in*DEFAULT_NB_PLANES + i] = knearests[offs+DEFAULT_NB_PLANES-1-i];
     }
 }
