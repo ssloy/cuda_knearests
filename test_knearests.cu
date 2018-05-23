@@ -9,7 +9,7 @@
 #define MAX_CLIPS  41
 #define MAX_T  64
 
-#define OUTPUT_TETS 0
+#define OUTPUT_TETS 1
 
 #include "VBW.h"
 #include "stopwatch.h"
@@ -73,9 +73,9 @@ bool load_file(const char* filename, std::vector<float>& xyz, bool normalize=tru
         float maxside = std::max(std::max(xmax-xmin, ymax-ymin), zmax-zmin);
 #pragma omp parallel for
         for (int i=0; i<xyz.size()/3; i++) {
-            xyz[i*3+0] = 1000.*(xyz[i*3+0]-xmin)/maxside;
-            xyz[i*3+1] = 1000.*(xyz[i*3+1]-ymin)/maxside;
-            xyz[i*3+2] = 1000.*(xyz[i*3+2]-zmin)/maxside;
+            xyz[i*3+0] = 1000.f*(xyz[i*3+0]-xmin)/maxside;
+            xyz[i*3+1] = 1000.f*(xyz[i*3+1]-ymin)/maxside;
+            xyz[i*3+2] = 1000.f*(xyz[i*3+2]-zmin)/maxside;
         }
         get_bbox(xyz, xmin, ymin, zmin, xmax, ymax, zmax);
         std::cerr << "bbox [" << xmin << ":" << xmax << "], [" << ymin << ":" << ymax << ", [" << zmin << ":" << zmax << "]" << std::endl;
@@ -126,6 +126,20 @@ void printDevProp() {
     }
 }
 
+
+void drop_xyz_file(float * pts, int nbpts) {
+    std::fstream file;
+    static int fileid = 0;
+    char filename[1024];
+    sprintf(filename, "C:\\DATA\\drop_%d_.xyz", fileid);
+    fileid++;
+    file.open(filename, std::ios_base::out);
+    file << nbpts << std::endl;
+    FOR(i, nbpts) file << pts[3 * i] << "  " << pts[3 * i + 1] << "  " << pts[3 * i + 2] << " \n";
+    file.close();
+}
+
+
 int main(int argc, char** argv) {
     printDevProp();
     if (2>argc) {
@@ -167,8 +181,25 @@ int main(int argc, char** argv) {
     int nb_tets = 0;
 
     {
-        Stopwatch W("Compute Voro... may test different things cpu/gpu/etc.");
-        compute_voro_diagram(pts,  tets, nb_tets);
+        //compute_voro_diagram(pts,  tets, nb_tets);
+        int nbpts = pts.size() / 3;
+        std::vector<Status> stat(nbpts);
+
+        std::vector<float> out_pts(pts.size(), 0);
+
+
+        if (false) {// CPU test /debug/stat
+            Stopwatch W("CPU run");
+            compute_voro_diagram_CPU(pts, tets, nb_tets, stat, out_pts);
+            gs.show();
+        }
+
+        int iter = 5; {
+            Stopwatch W("GPU run");
+            int block_size = pow(2, iter);
+            std::cerr << " block_size = " << block_size << std::endl;
+            compute_voro_diagram_GPU(pts, tets, block_size, nb_tets, stat, out_pts);
+        }
     }
 
 #if OUTPUT_TETS    
