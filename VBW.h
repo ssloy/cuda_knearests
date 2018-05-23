@@ -23,8 +23,9 @@ typedef unsigned char uchar;		// local indices with special values
 __shared__ uchar nbt[32];
 __shared__ uchar nbconflicts[32];
 __shared__ uchar3 shtr[32*MAX_T];
-__shared__ float4 shX[32*MAX_T];
+//__shared__ float4 shX[32*MAX_T];
 __shared__ uchar shboundary_next[32*MAX_CLIPS];
+__shared__ float4 GPU_clip_eq[32*MAX_CLIPS];
 #define nb_t nbt[threadIdx.x]
 #define nb_conflicts nbconflicts[threadIdx.x]
 
@@ -121,9 +122,11 @@ namespace VBW {
 		int voro_id;					// API --- id of the seed of the current voro cell
 		float3 voro_seed;
 		uchar nb_v;					// API --- size of vertices
+#if OUTPUT_TETS
 		int vorother_id[MAX_CLIPS];			// API --- vertices ids (to compute clipping planes)
+#endif        
 
-        float4 GPU_clip_eq[MAX_CLIPS];		// explicit plane equations from the bbox
+//        float4 GPU_clip_eq[MAX_CLIPS];		// explicit plane equations from the bbox
 //float4 * GPU_clip_eq;
 
 		float3 B;						// last loaded voro seed position... dirty save of memory access for security ray
@@ -149,22 +152,22 @@ namespace VBW {
 		voro_seed = make_float3(pts[3 * voro_id], pts[3 * voro_id + 1], pts[3 * voro_id + 2]);
 		status = security_ray_not_reached;
 
-		GPU_clip_eq[0] = make_float4(1.0, 0.0, 0.0, -xmin);
-		GPU_clip_eq[1] = make_float4(-1.0, 0.0, 0.0, xmax);
-		GPU_clip_eq[2] = make_float4(0.0, 1.0, 0.0, -ymin);
-		GPU_clip_eq[3] = make_float4(0.0, -1.0, 0.0, ymax);
-		GPU_clip_eq[4] = make_float4(0.0, 0.0, 1.0, -zmin);
-		GPU_clip_eq[5] = make_float4(0.0, 0.0, -1.0, zmax);
+		GPU_clip_eq[threadIdx.x*MAX_CLIPS+0] = make_float4(1.0, 0.0, 0.0, -xmin);
+		GPU_clip_eq[threadIdx.x*MAX_CLIPS+1] = make_float4(-1.0, 0.0, 0.0, xmax);
+		GPU_clip_eq[threadIdx.x*MAX_CLIPS+2] = make_float4(0.0, 1.0, 0.0, -ymin);
+		GPU_clip_eq[threadIdx.x*MAX_CLIPS+3] = make_float4(0.0, -1.0, 0.0, ymax);
+		GPU_clip_eq[threadIdx.x*MAX_CLIPS+4] = make_float4(0.0, 0.0, 1.0, -zmin);
+		GPU_clip_eq[threadIdx.x*MAX_CLIPS+5] = make_float4(0.0, 0.0, -1.0, zmax);
 		nb_v = 6;
 
-		shtr[threadIdx.x*MAX_T+0] = make_uchar3(2, 5, 0);		shX[threadIdx.x*MAX_T+0] = make_float4(-xmin, -ymin, -zmax, -1);
-		shtr[threadIdx.x*MAX_T+1] = make_uchar3(5, 3, 0);		shX[threadIdx.x*MAX_T+1] = make_float4(-xmin, -ymax, -zmax, -1);
-		shtr[threadIdx.x*MAX_T+2] = make_uchar3(1, 5, 2);		shX[threadIdx.x*MAX_T+2] = make_float4(-xmax, -ymin, -zmax, -1);
-		shtr[threadIdx.x*MAX_T+3] = make_uchar3(5, 1, 3);		shX[threadIdx.x*MAX_T+3] = make_float4(-xmax, -ymax, -zmax, -1);
-		shtr[threadIdx.x*MAX_T+4] = make_uchar3(4, 2, 0);		shX[threadIdx.x*MAX_T+4] = make_float4(-xmin, -ymin, -zmin, -1);
-		shtr[threadIdx.x*MAX_T+5] = make_uchar3(4, 0, 3);		shX[threadIdx.x*MAX_T+5] = make_float4(-xmin, -ymax, -zmin, -1);
-		shtr[threadIdx.x*MAX_T+6] = make_uchar3(2, 4, 1);		shX[threadIdx.x*MAX_T+6] = make_float4(-xmax, -ymin, -zmin, -1);
-		shtr[threadIdx.x*MAX_T+7] = make_uchar3(4, 3, 1);		shX[threadIdx.x*MAX_T+7] = make_float4(-xmax, -ymax, -zmin, -1);
+		shtr[threadIdx.x*MAX_T+0] = make_uchar3(2, 5, 0);     //shX[threadIdx.x*MAX_T+0] = make_float4(-xmin, -ymin, -zmax, -1);
+		shtr[threadIdx.x*MAX_T+1] = make_uchar3(5, 3, 0);     //shX[threadIdx.x*MAX_T+1] = make_float4(-xmin, -ymax, -zmax, -1);
+		shtr[threadIdx.x*MAX_T+2] = make_uchar3(1, 5, 2);     //shX[threadIdx.x*MAX_T+2] = make_float4(-xmax, -ymin, -zmax, -1);
+		shtr[threadIdx.x*MAX_T+3] = make_uchar3(5, 1, 3);     //shX[threadIdx.x*MAX_T+3] = make_float4(-xmax, -ymax, -zmax, -1);
+		shtr[threadIdx.x*MAX_T+4] = make_uchar3(4, 2, 0);     //shX[threadIdx.x*MAX_T+4] = make_float4(-xmin, -ymin, -zmin, -1);
+		shtr[threadIdx.x*MAX_T+5] = make_uchar3(4, 0, 3);     //shX[threadIdx.x*MAX_T+5] = make_float4(-xmin, -ymax, -zmin, -1);
+		shtr[threadIdx.x*MAX_T+6] = make_uchar3(2, 4, 1);     //shX[threadIdx.x*MAX_T+6] = make_float4(-xmax, -ymin, -zmin, -1);
+		shtr[threadIdx.x*MAX_T+7] = make_uchar3(4, 3, 1);     //shX[threadIdx.x*MAX_T+7] = make_float4(-xmax, -ymax, -zmin, -1);
 		nb_t=8;
 	}
 
@@ -178,9 +181,9 @@ namespace VBW {
      }
 
      __device__ float4 ConvexCell::compute_triangle_point(uchar3 t) const {
-         float4 pi1 = GPU_clip_eq[t.x];
-         float4 pi2 = GPU_clip_eq[t.y];
-         float4 pi3 = GPU_clip_eq[t.z];
+         float4 pi1 = GPU_clip_eq[threadIdx.x*MAX_CLIPS+t.x];
+         float4 pi2 = GPU_clip_eq[threadIdx.x*MAX_CLIPS+t.y];
+         float4 pi3 = GPU_clip_eq[threadIdx.x*MAX_CLIPS+t.z];
          float4 result;
          result.x = -det3x3(pi1.w, pi1.y, pi1.z, pi2.w, pi2.y, pi2.z, pi3.w, pi3.y, pi3.z);
          result.y = -det3x3(pi1.x, pi1.w, pi1.z, pi2.x, pi2.w, pi2.z, pi3.x, pi3.w, pi3.z);
@@ -195,29 +198,33 @@ namespace VBW {
              return; 
          }
          shtr[threadIdx.x*MAX_T+nb_t] = make_uchar3(i, j, k);
-         shX[threadIdx.x*MAX_T+nb_t] = compute_triangle_point(make_uchar3(i, j, k));
+//         shX[threadIdx.x*MAX_T+nb_t] = compute_triangle_point(make_uchar3(i, j, k));
          nb_t++;
      }
 
-	 __device__ int ConvexCell::new_point(int vid) {
+     __device__ int ConvexCell::new_point(int vid) {
          if (nb_v == MAX_CLIPS) { 
              status = vertex_overflow; 
              return -1; 
          }
-		vorother_id[nb_v] = vid;
-		B = make_float3(pts[3 * vid], pts[3 * vid + 1], pts[3 * vid + 2]);
-		float3 dir = make_float3(voro_seed.x - B.x, voro_seed.y - B.y, voro_seed.z - B.z);
-		float3 ave2 = make_float3(voro_seed.x + B.x, voro_seed.y + B.y, voro_seed.z + B.z);
-		float dot = ave2.x*dir.x + ave2.y*dir.y + ave2.z*dir.z;
-		GPU_clip_eq[nb_v] = make_float4(dir.x, dir.y, dir.z, -dot / 2.);
-		nb_v++;
-		return nb_v - 1;
-	}
+#if OUTPUT_TETS
+         vorother_id[nb_v] = vid;
+#endif        
+         B = make_float3(pts[3 * vid], pts[3 * vid + 1], pts[3 * vid + 2]);
+         float3 dir  = make_float3(voro_seed.x - B.x, voro_seed.y - B.y, voro_seed.z - B.z);
+         float3 ave2 = make_float3(voro_seed.x + B.x, voro_seed.y + B.y, voro_seed.z + B.z);
+         float dot = ave2.x*dir.x + ave2.y*dir.y + ave2.z*dir.z;
+         GPU_clip_eq[threadIdx.x*MAX_CLIPS+nb_v] = make_float4(dir.x, dir.y, dir.z, -dot / 2.);
+         nb_v++;
+         return nb_v - 1;
+     }
 
 
      __device__ void ConvexCell::switch_triangles(uchar t0, uchar t1) {
-         uchar3	tmp_id = shtr[threadIdx.x*MAX_T+t0];	shtr[threadIdx.x*MAX_T+t0] = shtr[threadIdx.x*MAX_T+t1];	shtr[threadIdx.x*MAX_T+t1] = tmp_id;
-         float4	tmp_X = shX[threadIdx.x*MAX_T+t0];		shX[threadIdx.x*MAX_T+t0] = shX[threadIdx.x*MAX_T+t1];	shX[threadIdx.x*MAX_T+t1] = tmp_X;
+         uchar3 tmp_id = shtr[threadIdx.x*MAX_T+t0];
+         shtr[threadIdx.x*MAX_T+t0] = shtr[threadIdx.x*MAX_T+t1];
+         shtr[threadIdx.x*MAX_T+t1] = tmp_id;
+         //         float4	tmp_X = shX[threadIdx.x*MAX_T+t0];		shX[threadIdx.x*MAX_T+t0] = shX[threadIdx.x*MAX_T+t1];	shX[threadIdx.x*MAX_T+t1] = tmp_X;
      }
 
 
@@ -282,7 +289,7 @@ namespace VBW {
 	 __device__ void  ConvexCell::clip_by_plane(int vid) {
 		int cur_v= new_point(vid);
 		if (status == vertex_overflow) return;
-		float4 eqn = GPU_clip_eq[cur_v];
+		float4 eqn = GPU_clip_eq[threadIdx.x*MAX_CLIPS+cur_v];
 		nb_conflicts = 0;
 
 		float3 diff2seed = make_float3(B.x - voro_seed.x, B.y  - voro_seed.y, B.z - voro_seed.z);
@@ -292,8 +299,9 @@ namespace VBW {
 		int i = 0;
 		float dmax2 = 0;
 		while (i < nb_t) {
-			float4  pc = shX[threadIdx.x*MAX_T+i];
-
+//			float4  pc = shX[threadIdx.x*MAX_T+i];
+            float4 pc = compute_triangle_point(shtr[threadIdx.x*MAX_T+i]);
+            
 			// update security radius
 			float3 diff = make_float3( pc.x / pc.w - voro_seed.x,		pc.y / pc.w - voro_seed.y,		pc.z / pc.w - voro_seed.z);
 			float d2 = diff.x*diff.x + diff.y*diff.y + diff.z*diff.z ;
