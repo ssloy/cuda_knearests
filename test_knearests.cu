@@ -9,6 +9,8 @@
 #define MAX_CLIPS  41
 #define MAX_T  64
 
+#define OUTPUT_TETS 1
+
 #include "VBW.h"
 #include "stopwatch.h"
 
@@ -157,18 +159,23 @@ int main(int argc, char** argv) {
 */
 
     int nb_pts = pts.size()/3;
-    std::vector<int> tets(0);//nb_pts * 4 * 50);
+#if OUTPUT_TETS    
+    std::vector<int> tets(nb_pts * 4 * 50);
+#else
+    std::vector<int> tets(0);
+#endif
     int nb_tets = 0;
 
     {
         Stopwatch W("Compute Voro... may test different things cpu/gpu/etc.");
         compute_voro_diagram(pts,  tets, nb_tets);
     }
-/*    std::cerr << "nb tets: " << nb_tets << std::endl;
 
+#if OUTPUT_TETS    
     std::cerr << "EXPORT" << std::endl;
     export_tet_mesh(pts.data(),nb_pts, tets.data(), nb_tets);
-*/
+#endif    
+
     return 0;
 }
 

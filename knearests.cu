@@ -144,7 +144,7 @@ __global__ void knearest(int xdim, int ydim, int zdim, int num_stored, const int
 
 // ------------------------------------------------------------
 
-void kn_firstbuild(kn_problem *kn,float *d_points, int numpoints) {
+void kn_firstbuild(kn_problem *kn, float *d_points, int numpoints) {
     cudaError_t err = cudaSuccess;
     cudaEvent_t start, stop;
     cudaEventCreate(&start);
