@@ -19,9 +19,13 @@
 typedef unsigned char uchar;  // local indices with special values
 
 // voronoi vertices are stored as triangles
-__shared__ uchar3 tr[32*MAX_T]; // memory pool for chained lists of triangles
-__shared__ uchar boundary_next[32*MAX_CLIPS];
-__shared__ float4 GPU_clip_eq[32*MAX_CLIPS]; // clipping planes
+__shared__ uchar3 tr_data[32*MAX_T]; // memory pool for chained lists of triangles
+__shared__ uchar boundary_next_data[32*MAX_CLIPS];
+__shared__ float4 clip_data[32*MAX_CLIPS]; // clipping planes
+
+inline __device__ uchar3& tr(int t) { return  tr_data[threadIdx.x*MAX_T + t]; }
+inline __device__ uchar& boundary_next(int v) { return  boundary_next_data[threadIdx.x*MAX_CLIPS + v]; }
+inline __device__ float4& clip(int v) { return  clip_data[threadIdx.x*MAX_CLIPS + v]; }
 
 namespace VBW {
 
@@ -29,7 +33,6 @@ namespace VBW {
         GlobalStats() { reset(); }
         void reset() {
             nb_clips_before_radius.resize(1000, 0);
-            nb_non_zero_clips_before_radius.resize(1000, 0);
             nb_removed_voro_vertex_per_clip.resize(1000, 0);
             compute_boundary_iter.resize(1000, 0);
             nbv.resize(1000, 0);
@@ -37,31 +40,25 @@ namespace VBW {
         }
         void start_cell() {
             cur_clip = 6;/* the bbox */
-            cur_non_zero_clip = 6;/* the bbox */
         }
         void add_clip(int nb_conflict_vertices) {
             cur_clip++;
-            if (nb_conflict_vertices > 0) cur_non_zero_clip++;
             nb_removed_voro_vertex_per_clip[nb_conflict_vertices]++;
         }
         void add_compute_boundary_iter(int nb_iter) { compute_boundary_iter[nb_iter]++; }
         void end_cell() {
             nb_clips_before_radius[cur_clip]++;
-            nb_non_zero_clips_before_radius[cur_non_zero_clip]++;
         }
         int cur_clip;
-        int cur_non_zero_clip;
         std::vector<int> nbv;
         std::vector<int> nbt;
 
 
         std::vector<int> compute_boundary_iter;
         std::vector<int> nb_clips_before_radius;
-        std::vector<int> nb_non_zero_clips_before_radius;
         std::vector<int> nb_removed_voro_vertex_per_clip;
         void show() {
             //show_prop(nb_clips_before_radius, false, false," #clips ");
-            //show_prop(nb_non_zero_clips_before_radius, true, true, " #NZclips ");
             //show_prop(nb_removed_voro_vertex_per_clip, true, true, " #nb_removed_voro_vertex_per_clip ");
             //show_prop(compute_boundary_iter, true, true, " #compute_boundary_iter ");
             //show_prop(nbv, true, true, " #nbv ");
@@ -81,8 +78,8 @@ namespace VBW {
             __device__ void clip_by_plane(int vid);
             __device__ float4 compute_triangle_point(uchar3 t) const;
             __device__ inline  uchar& ith_plane(uchar t, int i) {
-                //           if (i == 0) return tr[threadIdx.x*MAX_T+t].x; if (i == 1) return tr[threadIdx.x*MAX_T+t].y; return tr[threadIdx.x*MAX_T+t].z;
-                return reinterpret_cast<uchar *>(tr + threadIdx.x*MAX_T + t)[i];
+                //return reinterpret_cast<uchar *>(tr_data + threadIdx.x*MAX_T + t)[i];
+                return reinterpret_cast<uchar *>(&(tr(t)))[i];
             }
 
             template <typename T> __device__ void inline swap_on_device(T& a, T& b) {
@@ -95,17 +92,16 @@ namespace VBW {
 
             Status status;
 
-            uchar nb_t;                     // API --- number of allocated triangles
-            uchar nb_conflicts;             // API --- number of allocated triangles
-            float* pts;                     // API --- input pointset
-            int voro_id;                    // API --- id of the seed of the current voro cell
+            uchar nb_t;
+            uchar nb_conflicts;
+            float* pts;
+            int voro_id;
             float3 voro_seed;
-            uchar nb_v;                     // API --- size of vertices
+            uchar nb_v;
 #if OUTPUT_TETS
-            int vorother_id[MAX_CLIPS];     // API --- vertices ids (to compute clipping planes)
+            int vorother_id[MAX_CLIPS]; 
 #endif        
-            float3 B;               // last loaded voro seed position... dirty save of memory access for security ray
-            uchar first_boundary_;  // boundary of the last set of triangles that hve been removed
+            uchar first_boundary_;     
     };
 
     __device__ ConvexCell::ConvexCell(int p_seed, float* p_pts) {
@@ -118,27 +114,27 @@ namespace VBW {
         float zmax = 1000 + eps;
         pts = p_pts;
         first_boundary_ = END_OF_LIST;
-        FOR(i, MAX_CLIPS) boundary_next[threadIdx.x*MAX_CLIPS+i] = END_OF_LIST;
+        FOR(i, MAX_CLIPS) boundary_next(i) = END_OF_LIST;
         voro_id = p_seed;
         voro_seed = make_float3(pts[3 * voro_id], pts[3 * voro_id + 1], pts[3 * voro_id + 2]);
-        status = security_ray_not_reached;
+        status = success;
 
-        GPU_clip_eq[threadIdx.x*MAX_CLIPS+0] = make_float4( 1.0,  0.0,  0.0, -xmin);
-        GPU_clip_eq[threadIdx.x*MAX_CLIPS+1] = make_float4(-1.0,  0.0,  0.0,  xmax);
-        GPU_clip_eq[threadIdx.x*MAX_CLIPS+2] = make_float4( 0.0,  1.0,  0.0, -ymin);
-        GPU_clip_eq[threadIdx.x*MAX_CLIPS+3] = make_float4( 0.0, -1.0,  0.0,  ymax);
-        GPU_clip_eq[threadIdx.x*MAX_CLIPS+4] = make_float4( 0.0,  0.0,  1.0, -zmin);
-        GPU_clip_eq[threadIdx.x*MAX_CLIPS+5] = make_float4( 0.0,  0.0, -1.0,  zmax);
+        clip(0) = make_float4( 1.0,  0.0,  0.0, -xmin);
+        clip(1) = make_float4(-1.0,  0.0,  0.0,  xmax);
+        clip(2) = make_float4( 0.0,  1.0,  0.0, -ymin);
+        clip(3) = make_float4( 0.0, -1.0,  0.0,  ymax);
+        clip(4) = make_float4( 0.0,  0.0,  1.0, -zmin);
+        clip(5) = make_float4( 0.0,  0.0, -1.0,  zmax);
         nb_v = 6;
 
-        tr[threadIdx.x*MAX_T+0] = make_uchar3(2, 5, 0);
-        tr[threadIdx.x*MAX_T+1] = make_uchar3(5, 3, 0);
-        tr[threadIdx.x*MAX_T+2] = make_uchar3(1, 5, 2);
-        tr[threadIdx.x*MAX_T+3] = make_uchar3(5, 1, 3);
-        tr[threadIdx.x*MAX_T+4] = make_uchar3(4, 2, 0);
-        tr[threadIdx.x*MAX_T+5] = make_uchar3(4, 0, 3);
-        tr[threadIdx.x*MAX_T+6] = make_uchar3(2, 4, 1);
-        tr[threadIdx.x*MAX_T+7] = make_uchar3(4, 3, 1);
+        tr(0) = make_uchar3(2, 5, 0);
+        tr(1) = make_uchar3(5, 3, 0);
+        tr(2) = make_uchar3(1, 5, 2);
+        tr(3) = make_uchar3(5, 1, 3);
+        tr(4) = make_uchar3(4, 2, 0);
+        tr(5) = make_uchar3(4, 0, 3);
+        tr(6) = make_uchar3(2, 4, 1);
+        tr(7) = make_uchar3(4, 3, 1);
         nb_t = 8;
     }
 
@@ -151,9 +147,9 @@ namespace VBW {
     }
 
     __device__ float4 ConvexCell::compute_triangle_point(uchar3 t) const {
-        float4 pi1 = GPU_clip_eq[threadIdx.x*MAX_CLIPS+t.x];
-        float4 pi2 = GPU_clip_eq[threadIdx.x*MAX_CLIPS+t.y];
-        float4 pi3 = GPU_clip_eq[threadIdx.x*MAX_CLIPS+t.z];
+        float4 pi1 = clip(t.x);
+        float4 pi2 = clip(t.y);
+        float4 pi3 = clip(t.z);
         float4 result;
         result.x = -det3x3(pi1.w, pi1.y, pi1.z, pi2.w, pi2.y, pi2.z, pi3.w, pi3.y, pi3.z);
         result.y = -det3x3(pi1.x, pi1.w, pi1.z, pi2.x, pi2.w, pi2.z, pi3.x, pi3.w, pi3.z);
@@ -167,7 +163,7 @@ namespace VBW {
             status = triangle_overflow; 
             return; 
         }
-        tr[threadIdx.x*MAX_T+nb_t] = make_uchar3(i, j, k);
+        tr(nb_t) = make_uchar3(i, j, k);
         nb_t++;
     }
 
@@ -179,11 +175,11 @@ namespace VBW {
 #if OUTPUT_TETS
         vorother_id[nb_v] = vid;
 #endif        
-        B = make_float3(pts[3 * vid], pts[3 * vid + 1], pts[3 * vid + 2]);
+        float3 B = make_float3(pts[3 * vid], pts[3 * vid + 1], pts[3 * vid + 2]);
         float3 dir  = make_float3(voro_seed.x - B.x, voro_seed.y - B.y, voro_seed.z - B.z);
         float3 ave2 = make_float3(voro_seed.x + B.x, voro_seed.y + B.y, voro_seed.z + B.z);
         float dot = ave2.x*dir.x + ave2.y*dir.y + ave2.z*dir.z;
-        GPU_clip_eq[threadIdx.x*MAX_CLIPS+nb_v] = make_float4(dir.x, dir.y, dir.z, -dot / 2.);
+        clip(nb_v) = make_float4(dir.x, dir.y, dir.z, -dot / 2.);
         nb_v++;
         return nb_v - 1;
     }
@@ -191,8 +187,8 @@ namespace VBW {
     __device__ void ConvexCell::compute_boundary() {
         while (first_boundary_ != END_OF_LIST) { // clean circular list of the boundary
             uchar last = first_boundary_;
-            first_boundary_ = boundary_next[threadIdx.x*MAX_CLIPS+first_boundary_];
-            boundary_next[threadIdx.x*MAX_CLIPS+last] = END_OF_LIST;
+            first_boundary_ = boundary_next(first_boundary_);
+            boundary_next(last) = END_OF_LIST;
         }
 
         int nb_iter = 0;
@@ -204,8 +200,8 @@ namespace VBW {
             }
             bool is_in_border[3];
             bool next_is_opp[3];
-            FOR(e, 3)   is_in_border[e] = (boundary_next[threadIdx.x*MAX_CLIPS+ith_plane(t, e)] != END_OF_LIST);
-            FOR(e, 3)   next_is_opp[e] = (boundary_next[threadIdx.x*MAX_CLIPS+ith_plane(t, (e + 1) % 3)] == ith_plane(t, e));
+            FOR(e, 3)   is_in_border[e] = (boundary_next(ith_plane(t, e)) != END_OF_LIST);
+            FOR(e, 3)   next_is_opp[e] = (boundary_next(ith_plane(t, (e + 1) % 3)) == ith_plane(t, e));
 
             bool can_do_it_now = true;
             // check for non manifoldness
@@ -214,8 +210,8 @@ namespace VBW {
             // check for more than one boundary ... or first triangle
             if (!next_is_opp[0] && !next_is_opp[1] && !next_is_opp[2]) {
                 if (first_boundary_ == END_OF_LIST) {
-                    FOR(e, 3) boundary_next[threadIdx.x*MAX_CLIPS+ith_plane(t, e)] = ith_plane(t, (e + 1) % 3);
-                    first_boundary_ = tr[threadIdx.x*MAX_T+t].x;
+                    FOR(e, 3) boundary_next(ith_plane(t, e)) = ith_plane(t, (e + 1) % 3);
+                    first_boundary_ = tr(t).x;
                 }
                 else can_do_it_now = false;
             }
@@ -227,15 +223,15 @@ namespace VBW {
             }
 
             // link next
-            FOR(e, 3) if (!next_is_opp[e]) boundary_next[threadIdx.x*MAX_CLIPS+ith_plane(t, e)] = ith_plane(t, (e + 1) % 3);
+            FOR(e, 3) if (!next_is_opp[e]) boundary_next(ith_plane(t, e)) = ith_plane(t, (e + 1) % 3);
 
             // destroy link from removed vertices
             FOR(e, 3)  if (next_is_opp[e] && next_is_opp[(e + 1) % 3]) {
-                if (first_boundary_ == ith_plane(t, (e + 1) % 3)) first_boundary_ = boundary_next[threadIdx.x*MAX_CLIPS+ith_plane(t, (e + 1) % 3)];
-                boundary_next[threadIdx.x*MAX_CLIPS+ith_plane(t, (e + 1) % 3)] = END_OF_LIST;
+                if (first_boundary_ == ith_plane(t, (e + 1) % 3)) first_boundary_ = boundary_next(ith_plane(t, (e + 1) % 3));
+                boundary_next(ith_plane(t, (e + 1) % 3)) = END_OF_LIST;
             }
 
-            swap_on_device(tr[threadIdx.x*MAX_T + t], tr[threadIdx.x*MAX_T + nb_t+nb_conflicts-1]);
+            swap_on_device(tr(t), tr(nb_t+nb_conflicts-1));
 
             t = nb_t;
             nb_conflicts--;
@@ -248,26 +244,18 @@ namespace VBW {
     __device__ void  ConvexCell::clip_by_plane(int vid) {
         int cur_v= new_point(vid);
         if (status == vertex_overflow) return;
-        float4 eqn = GPU_clip_eq[threadIdx.x*MAX_CLIPS+cur_v];
+        float4 eqn = clip(cur_v);
         nb_conflicts = 0;
 
-        float3 diff2seed = make_float3(B.x - voro_seed.x, B.y  - voro_seed.y, B.z - voro_seed.z);
-        float d22seed = diff2seed.x*diff2seed.x + diff2seed.y*diff2seed.y + diff2seed.z*diff2seed.z;
 
         // Step 1: find conflicts
         int i = 0;
         float dmax2 = 0;
         while (i < nb_t) {
-            float4 pc = compute_triangle_point(tr[threadIdx.x*MAX_T+i]);
-
-            // update security radius
-            float3 diff = make_float3( pc.x/pc.w - voro_seed.x, pc.y/pc.w - voro_seed.y, pc.z/pc.w - voro_seed.z );
-            float d2 = diff.x*diff.x + diff.y*diff.y + diff.z*diff.z ;
-            if (d2 > dmax2) dmax2 = d2;
-
+            float4 pc = compute_triangle_point(tr(i));
             // check conflict
             if (eqn.x*pc.x + eqn.y*pc.y + eqn.z*pc.z + eqn.w*pc.w >0){// tr conflict
-                swap_on_device(tr[threadIdx.x*MAX_T + i], tr[threadIdx.x*MAX_T + nb_t-1]);
+                swap_on_device(tr(i), tr(nb_t-1));
                 nb_t--;
                 nb_conflicts++;
             }
@@ -278,7 +266,6 @@ namespace VBW {
         gs.add_clip(nb_conflicts);
 #endif
 
-        if (d22seed > 4. * dmax2) { status = success; return; }
         if (nb_conflicts == 0) {
             nb_v--;
             return;
@@ -286,15 +273,15 @@ namespace VBW {
 
         // Step 2: compute cavity boundary
         compute_boundary();
-        if (status != security_ray_not_reached) return;
+        if (status != success) return;
         if (first_boundary_ == END_OF_LIST) return;
 
         // Step 3: Triangulate cavity
         uchar cir = first_boundary_;
         do {
-            new_triangle(cur_v, cir, boundary_next[threadIdx.x*MAX_CLIPS+cir]);
-            if (status != security_ray_not_reached) return;
-            cir = boundary_next[threadIdx.x*MAX_CLIPS+cir];
+            new_triangle(cur_v, cir, boundary_next(cir));
+            if (status != success) return;
+            cir = boundary_next(cir);
         } while (cir != first_boundary_);
     }
 }
@@ -307,25 +294,44 @@ __global__ void voro_cell_test_GPU_param(float * pts, int nbpts, unsigned int* n
 
     FOR(d, 3) out_pts[3 * seed + d] = pts[3 * seed + d];
 
+    //create BBox
     VBW::ConvexCell cc(seed, pts);
 
+    // clip by halfspaces
     FOR(v, DEFAULT_NB_PLANES) {
         cc.clip_by_plane(neigs[DEFAULT_NB_PLANES * seed + v]);
-        if (cc.status == VBW::success) break;
-        if (cc.status != VBW::security_ray_not_reached) {
+        if (cc.status != VBW::success) {
             gpu_stat[seed] = cc.status;
             return;
         }
     }
+
+    // check security ray
+    float min_vertex_dist22seed = 1000000;
+    FOR(i, cc.nb_t) {
+        float4 pc = cc.compute_triangle_point(tr(i));
+        float3 diff2seed = make_float3(pc.x/pc.w - cc.voro_seed.x, pc.y / pc.w - cc.voro_seed.y, pc.z / pc.w - cc.voro_seed.z);
+        float d22seed = diff2seed.x*diff2seed.x + diff2seed.y*diff2seed.y + diff2seed.z*diff2seed.z;
+        min_vertex_dist22seed = min(d22seed, min_vertex_dist22seed);
+    }
+    float max_neig_dist22seed = 0;
+    FOR(v, DEFAULT_NB_PLANES) {
+        unsigned int vid = neigs[DEFAULT_NB_PLANES * seed + v];
+        float3 diff2seed = make_float3(pts[3*vid] - cc.voro_seed.x, pts[3 * vid+1] - cc.voro_seed.y, pts[3 * vid+2] - cc.voro_seed.z);
+        float d22seed = diff2seed.x*diff2seed.x + diff2seed.y*diff2seed.y + diff2seed.z*diff2seed.z;
+        max_neig_dist22seed = max(d22seed, max_neig_dist22seed);
+    }
     gpu_stat[seed] = cc.status;
+    if (max_neig_dist22seed<4* min_vertex_dist22seed)
+         gpu_stat[seed] = VBW::security_ray_not_reached;
 
 #if OUTPUT_TETS
     FOR(t, cc.nb_t) {
-        if (tr[threadIdx.x*MAX_T+t].x > 5 && tr[threadIdx.x*MAX_T+t].y > 5 && tr[threadIdx.x*MAX_T+t].z > 5) {
+        if (tr(t).x > 5 && tr(t).y > 5 && tr(t).z > 5) {
             uint4 tet = make_uint4(cc.voro_id,0,0,0);
-            tet.y = cc.vorother_id[tr[threadIdx.x*MAX_T+t].x];
-            tet.z = cc.vorother_id[tr[threadIdx.x*MAX_T+t].y];
-            tet.w = cc.vorother_id[tr[threadIdx.x*MAX_T+t].z];
+            tet.y = cc.vorother_id[tr(t).x];
+            tet.z = cc.vorother_id[tr(t).y];
+            tet.w = cc.vorother_id[tr(t).z];
             int top = atomicAdd(nb_out_tet, 1);
             out_tets[top* 4 ] = cc.voro_id;
             FOR(f, 3) out_tets[top * 4 + f + 1] = cc.vorother_id[cc.ith_plane(t, f)];
@@ -446,22 +452,7 @@ void compute_voro_diagram(std::vector<float>& pts, std::vector<int>& out_tets, i
     std::vector<VBW::Status> stat(nbpts);
 
     std::vector<float> out_pts(pts.size(),0);
- /*   // CPU stats
-    if (0) {
-        Stopwatch W("CPU run");
-        std::vector<int> neighbors(nbpts * DEFAULT_NB_PLANES, -1);
-        update_knn(pts.data(), nbpts, neighbors.data());
-        nb_tets = 0;
-        FOR(seed, nbpts) voro_cell_test_CPU_param(pts, neighbors, stat.data(), out_tets, &nb_tets, out_pts, seed);
-        VBW::gs.show();
-        std::cerr << " \n\n\n---------Summary of success/failure------------\n";
-        std::vector<int> nb_statuss(5, 0);
-        FOR(i, stat.size()) nb_statuss[stat[i]]++;
-        FOR(r, 5) std::cerr << " " << VBW::StatusStr[r] << "   " << nb_statuss[r] << "\n";
-    }
 
-*/
-    //return;
     // test block size
     //FOR(iter, 10)
     int iter = 5; {
@@ -478,27 +469,7 @@ void compute_voro_diagram(std::vector<float>& pts, std::vector<int>& out_tets, i
         FOR(i, stat.size()) nb_statuss[stat[i]]++;
         FOR(r, 5) std::cerr << " " << VBW::StatusStr[r] << "   " << nb_statuss[r] << "\n";
     }
-    //return;
-    // test loyd iterations
-    /*
-    if (0) {
-        Stopwatch W("CPU Loyd");
-        FOR(iter, 20) {
-            VBW::gs.reset();
-            update_knn(pts.data(), nbpts, neighbors.data());
-            nb_tets = 0;
-            FOR(seed, nbpts) voro_cell_test_CPU_param(pts, neighbors, stat.data(), out_tets, &nb_tets, out_pts,seed);
-            //VBW::gs.show();
-            int block_size = 256;
-            compute_voro_diagram_GPU(pts, neighbors,  out_tets, block_size, nb_tets,stat, out_pts);
 
-
-            FOR(i, 3 * nbpts) pts[i] = out_pts[i];
-            drop_xyz_file(pts.data(), nbpts);
-            W.tick();
-        }
-    }
-    */
 }
 
 #endif
