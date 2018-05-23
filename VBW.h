@@ -81,8 +81,8 @@ namespace VBW {
 
 	static const  uchar  END_OF_LIST = 255;
 
-	enum Statut { triangle_overflow = 0, vertex_overflow = 1, weird_cavity = 2, security_ray_not_reached = 3, success = 4 } ;
-	char StatutStr[5][128]={ "triangle_overflow","vertex_overflow ","weird_cavity "," security_ray_not_reached ","success" };
+	enum Status { triangle_overflow = 0, vertex_overflow = 1, weird_cavity = 2, security_ray_not_reached = 3, success = 4 } ;
+	char StatusStr[5][128]={ "triangle_overflow","vertex_overflow ","weird_cavity "," security_ray_not_reached ","success" };
 
 	class ConvexCell {
 	public:
@@ -101,7 +101,7 @@ namespace VBW {
 		 __device__ void new_triangle(uchar i, uchar j, uchar k);
 		 __device__ void compute_boundary();
 
-		Statut statut;
+		Status status;
 
 		/*voronoi vertices stored as triangles */
         /*
@@ -147,7 +147,7 @@ namespace VBW {
 		FOR(i, MAX_CLIPS) shboundary_next[threadIdx.x*MAX_CLIPS+i] = END_OF_LIST;
 		voro_id = p_seed;
 		voro_seed = make_float3(pts[3 * voro_id], pts[3 * voro_id + 1], pts[3 * voro_id + 2]);
-		statut = security_ray_not_reached;
+		status = security_ray_not_reached;
 
 		GPU_clip_eq[0] = make_float4(1.0, 0.0, 0.0, -xmin);
 		GPU_clip_eq[1] = make_float4(-1.0, 0.0, 0.0, xmax);
@@ -169,36 +169,41 @@ namespace VBW {
 	}
 
 
-	 __device__ inline float det2x2(float a11, float a12, float a21, float a22) { return a11*a22 - a12*a21; }
-	 __device__ inline float det3x3(float a11, float a12, float a13, float a21, float a22, float a23, float a31, float a32, float a33) {
-		return a11*det2x2(a22, a23, a32, a33) - a21*det2x2(a12, a13, a32, a33) + a31*det2x2(a12, a13, a22, a23);
-	}
-	 __device__ float4 ConvexCell::compute_triangle_point(uchar3 t) const {
-//        printf("%d %d %d %d\n", t.x, t.y, t.z, threadIdx.x);
-		float4 pi1 = GPU_clip_eq[t.x];
-		float4 pi2 = GPU_clip_eq[t.y];
-		float4 pi3 = GPU_clip_eq[t.z];
-		float4 result;
-		result.x = -det3x3(pi1.w, pi1.y, pi1.z, pi2.w, pi2.y, pi2.z, pi3.w, pi3.y, pi3.z);
-		result.y = -det3x3(pi1.x, pi1.w, pi1.z, pi2.x, pi2.w, pi2.z, pi3.x, pi3.w, pi3.z);
-		result.z = -det3x3(pi1.x, pi1.y, pi1.w, pi2.x, pi2.y, pi2.w, pi3.x, pi3.y, pi3.w);
-		result.w = det3x3(pi1.x, pi1.y, pi1.z, pi2.x, pi2.y, pi2.z, pi3.x, pi3.y, pi3.z);
-		return result;
-	}
+     __device__ inline float det2x2(float a11, float a12, float a21, float a22) { 
+         return a11*a22 - a12*a21; 
+     }
 
+     __device__ inline float det3x3(float a11, float a12, float a13, float a21, float a22, float a23, float a31, float a32, float a33) {
+         return a11*det2x2(a22, a23, a32, a33) - a21*det2x2(a12, a13, a32, a33) + a31*det2x2(a12, a13, a22, a23);
+     }
 
+     __device__ float4 ConvexCell::compute_triangle_point(uchar3 t) const {
+         float4 pi1 = GPU_clip_eq[t.x];
+         float4 pi2 = GPU_clip_eq[t.y];
+         float4 pi3 = GPU_clip_eq[t.z];
+         float4 result;
+         result.x = -det3x3(pi1.w, pi1.y, pi1.z, pi2.w, pi2.y, pi2.z, pi3.w, pi3.y, pi3.z);
+         result.y = -det3x3(pi1.x, pi1.w, pi1.z, pi2.x, pi2.w, pi2.z, pi3.x, pi3.w, pi3.z);
+         result.z = -det3x3(pi1.x, pi1.y, pi1.w, pi2.x, pi2.y, pi2.w, pi3.x, pi3.y, pi3.w);
+         result.w =  det3x3(pi1.x, pi1.y, pi1.z, pi2.x, pi2.y, pi2.z, pi3.x, pi3.y, pi3.z);
+         return result;
+     }
 
-
-
-	 __device__ void ConvexCell::new_triangle(uchar i, uchar j, uchar k) {
-		if (nb_t + 1 == MAX_T) { statut = triangle_overflow; return; }
-		shtr[threadIdx.x*MAX_T+nb_t] = make_uchar3(i, j, k);
-		shX[threadIdx.x*MAX_T+nb_t] = compute_triangle_point(make_uchar3(i, j, k));
-		nb_t++;
-}
+     __device__ void ConvexCell::new_triangle(uchar i, uchar j, uchar k) {
+         if (nb_t+1 >= MAX_T) { 
+             status = triangle_overflow; 
+             return; 
+         }
+         shtr[threadIdx.x*MAX_T+nb_t] = make_uchar3(i, j, k);
+         shX[threadIdx.x*MAX_T+nb_t] = compute_triangle_point(make_uchar3(i, j, k));
+         nb_t++;
+     }
 
 	 __device__ int ConvexCell::new_point(int vid) {
-		if (nb_v == MAX_CLIPS) { statut = vertex_overflow; return -1; }
+         if (nb_v == MAX_CLIPS) { 
+             status = vertex_overflow; 
+             return -1; 
+         }
 		vorother_id[nb_v] = vid;
 		B = make_float3(pts[3 * vid], pts[3 * vid + 1], pts[3 * vid + 2]);
 		float3 dir = make_float3(voro_seed.x - B.x, voro_seed.y - B.y, voro_seed.z - B.z);
@@ -210,10 +215,10 @@ namespace VBW {
 	}
 
 
-	 __device__ void ConvexCell::switch_triangles(uchar t0, uchar t1) {
-		uchar3	tmp_id = shtr[threadIdx.x*MAX_T+t0];	shtr[threadIdx.x*MAX_T+t0] = shtr[threadIdx.x*MAX_T+t1];	shtr[threadIdx.x*MAX_T+t1] = tmp_id;
-		float4	tmp_X = shX[threadIdx.x*MAX_T+t0];		shX[threadIdx.x*MAX_T+t0] = shX[threadIdx.x*MAX_T+t1];	shX[threadIdx.x*MAX_T+t1] = tmp_X;
-	}
+     __device__ void ConvexCell::switch_triangles(uchar t0, uchar t1) {
+         uchar3	tmp_id = shtr[threadIdx.x*MAX_T+t0];	shtr[threadIdx.x*MAX_T+t0] = shtr[threadIdx.x*MAX_T+t1];	shtr[threadIdx.x*MAX_T+t1] = tmp_id;
+         float4	tmp_X = shX[threadIdx.x*MAX_T+t0];		shX[threadIdx.x*MAX_T+t0] = shX[threadIdx.x*MAX_T+t1];	shX[threadIdx.x*MAX_T+t1] = tmp_X;
+     }
 
 
 
@@ -230,7 +235,7 @@ namespace VBW {
 		int nb_iter = 0;
 		uchar t = nb_t;
 		while (nb_conflicts>0) {
-			if (nb_iter++ >50) { statut = weird_cavity; return; }
+			if (nb_iter++ >50) { status = weird_cavity; return; }
 			bool is_in_border[3];
 			bool next_is_opp[3];
 			FOR(e, 3)   is_in_border[e] = (shboundary_next[threadIdx.x*MAX_CLIPS+ith_plane(t, e)] != END_OF_LIST);
@@ -276,7 +281,7 @@ namespace VBW {
 
 	 __device__ void  ConvexCell::clip_by_plane(int vid) {
 		int cur_v= new_point(vid);
-		if (statut == vertex_overflow) return;
+		if (status == vertex_overflow) return;
 		float4 eqn = GPU_clip_eq[cur_v];
 		nb_conflicts = 0;
 
@@ -308,7 +313,7 @@ namespace VBW {
 #endif
 
 
-		if (d22seed > 4. * dmax2) { statut = success; return; }
+		if (d22seed > 4. * dmax2) { status = success; return; }
 		if (nb_conflicts == 0) {
 			nb_v--;
 			return;
@@ -316,14 +321,14 @@ namespace VBW {
 
 		// Step 2: compute cavity boundary
 		compute_boundary();
-		if (statut != security_ray_not_reached) return;
+		if (status != security_ray_not_reached) return;
 		if (first_boundary_ == END_OF_LIST) return;
 
 		// Step 3: Triangulate cavity
 		uchar cir = first_boundary_;
 		do {
 			new_triangle(cur_v, cir, shboundary_next[threadIdx.x*MAX_CLIPS+cir]);
-			if (statut != security_ray_not_reached) return;
+			if (status != security_ray_not_reached) return;
 			cir = shboundary_next[threadIdx.x*MAX_CLIPS+cir];
 		} while (cir != first_boundary_);
 	}
@@ -332,7 +337,7 @@ namespace VBW {
 
 
 //###################  KERNEL   ######################
-__global__ void voro_cell_test_GPU_param(float * pts, int nbpts, unsigned int* neigs, float4 *glbGPU_clip_eq, VBW::Statut* gpu_stat, int *out_tets, int* nb_out_tet, float* out_pts){
+__global__ void voro_cell_test_GPU_param(float * pts, int nbpts, unsigned int* neigs, float4 *glbGPU_clip_eq, VBW::Status* gpu_stat, int *out_tets, int* nb_out_tet, float* out_pts){
     int seed = blockIdx.x * blockDim.x + threadIdx.x;
     if (seed >= nbpts) return;
 
@@ -345,13 +350,13 @@ __global__ void voro_cell_test_GPU_param(float * pts, int nbpts, unsigned int* n
 
     FOR(v, DEFAULT_NB_PLANES) {
         cc.clip_by_plane(neigs[DEFAULT_NB_PLANES * seed + v]);
-        if (cc.statut == VBW::success) break;
-        if (cc.statut != VBW::security_ray_not_reached) {
-            gpu_stat[seed] = cc.statut;
+        if (cc.status == VBW::success) break;
+        if (cc.status != VBW::security_ray_not_reached) {
+            gpu_stat[seed] = cc.status;
             return;
         }
     }
-    gpu_stat[seed] = cc.statut;
+    gpu_stat[seed] = cc.status;
 
 #if OUTPUT_TETS
 	FOR(t, nb_t) {
@@ -405,7 +410,7 @@ struct GPUBuffer {
 
 
 //###################  CALL FUNCTION ######################
-void compute_voro_diagram_GPU(std::vector<float>& pts, std::vector<int>& out_tets, int block_size , int &nb_tets, std::vector<VBW::Statut> &stat, std::vector<float>& out_pts) {
+void compute_voro_diagram_GPU(std::vector<float>& pts, std::vector<int>& out_tets, int block_size , int &nb_tets, std::vector<VBW::Status> &stat, std::vector<float>& out_pts) {
     int nbpts = pts.size() / 3;
     kn_problem *kn = NULL;
     {
@@ -418,7 +423,7 @@ void compute_voro_diagram_GPU(std::vector<float>& pts, std::vector<int>& out_tet
 
     GPUBuffer<float> out_pts_w(out_pts);
     GPUBuffer<int> tets_w(out_tets);
-    GPUBuffer<VBW::Statut> gpu_stat(stat);
+    GPUBuffer<VBW::Status> gpu_stat(stat);
     GPUVar<int> gpu_nb_out_tets(nb_tets);
     {
         float4 *glbGPU_clip_eq = NULL;// explicit plane equations from the bbox
@@ -489,7 +494,7 @@ void drop_xyz_file(float * pts, int nbpts) {
 
 void compute_voro_diagram(std::vector<float>& pts, std::vector<int>& out_tets, int &nb_tets) {
     int nbpts = pts.size() / 3;
-    std::vector<VBW::Statut> stat(nbpts);
+    std::vector<VBW::Status> stat(nbpts);
 
     std::vector<float> out_pts(pts.size(),0);
  /*   // CPU stats
@@ -501,9 +506,9 @@ void compute_voro_diagram(std::vector<float>& pts, std::vector<int>& out_tets, i
         FOR(seed, nbpts) voro_cell_test_CPU_param(pts, neighbors, stat.data(), out_tets, &nb_tets, out_pts, seed);
         VBW::gs.show();
         std::cerr << " \n\n\n---------Summary of success/failure------------\n";
-        std::vector<int> nb_statuts(5, 0);
-        FOR(i, stat.size()) nb_statuts[stat[i]]++;
-        FOR(r, 5) std::cerr << " " << VBW::StatutStr[r] << "   " << nb_statuts[r] << "\n";
+        std::vector<int> nb_statuss(5, 0);
+        FOR(i, stat.size()) nb_statuss[stat[i]]++;
+        FOR(r, 5) std::cerr << " " << VBW::StatusStr[r] << "   " << nb_statuss[r] << "\n";
     }
 
 */
@@ -520,9 +525,9 @@ void compute_voro_diagram(std::vector<float>& pts, std::vector<int>& out_tets, i
 
         VBW::gs.show();
         std::cerr << " \n\n\n---------Summary of success/failure------------\n";
-        std::vector<int> nb_statuts(5, 0);
-        FOR(i, stat.size()) nb_statuts[stat[i]]++;
-        FOR(r, 5) std::cerr << " " << VBW::StatutStr[r] << "   " << nb_statuts[r] << "\n";
+        std::vector<int> nb_statuss(5, 0);
+        FOR(i, stat.size()) nb_statuss[stat[i]]++;
+        FOR(r, 5) std::cerr << " " << VBW::StatusStr[r] << "   " << nb_statuss[r] << "\n";
     }
     //return;
     // test loyd iterations
