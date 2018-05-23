@@ -19,13 +19,23 @@
 typedef unsigned char uchar;  // local indices with special values
 
 // voronoi vertices are stored as triangles
-__shared__ uchar3 tr_data[32*MAX_T]; // memory pool for chained lists of triangles
-__shared__ uchar boundary_next_data[32*MAX_CLIPS];
-__shared__ float4 clip_data[32*MAX_CLIPS]; // clipping planes
+#ifdef __CUDA_ARCH__
+__shared__ uchar3 tr_data[32 * MAX_T]; // memory pool for chained lists of triangles
+__shared__ uchar boundary_next_data[32 * MAX_CLIPS];
+__shared__ float4 clip_data[32 * MAX_CLIPS]; // clipping planes
 
-inline __device__ uchar3& tr(int t) { return  tr_data[threadIdx.x*MAX_T + t]; }
-inline __device__ uchar& boundary_next(int v) { return  boundary_next_data[threadIdx.x*MAX_CLIPS + v]; }
-inline __device__ float4& clip(int v) { return  clip_data[threadIdx.x*MAX_CLIPS + v]; }
+inline  __device__ uchar3& tr(int t) { return  tr_data[threadIdx.x*MAX_T + t]; }
+inline  __device__ uchar& boundary_next(int v) { return  boundary_next_data[threadIdx.x*MAX_CLIPS + v]; }
+inline  __device__ float4& clip(int v) { return  clip_data[threadIdx.x*MAX_CLIPS + v]; }
+#else
+uchar3 tr_data[MAX_T]; // memory pool for chained lists of triangles
+uchar boundary_next_data[MAX_CLIPS];
+float4 clip_data[MAX_CLIPS]; // clipping planes
+
+inline uchar3& tr(int t) { return  tr_data[t]; }
+inline uchar& boundary_next(int v) { return  boundary_next_data[v]; }
+inline float4& clip(int v) { return  clip_data[v]; }
+#endif
 
 namespace VBW {
 
@@ -52,8 +62,6 @@ namespace VBW {
         int cur_clip;
         std::vector<int> nbv;
         std::vector<int> nbt;
-
-
         std::vector<int> compute_boundary_iter;
         std::vector<int> nb_clips_before_radius;
         std::vector<int> nb_removed_voro_vertex_per_clip;
@@ -63,7 +71,6 @@ namespace VBW {
             //show_prop(compute_boundary_iter, true, true, " #compute_boundary_iter ");
             //show_prop(nbv, true, true, " #nbv ");
             //show_prop(nbv, true, true, " #nbt ");
-
         }
     } gs;
 
@@ -74,21 +81,21 @@ namespace VBW {
 
     class ConvexCell {
         public:
-            __device__ ConvexCell(int p_seed, float* p_pts);
-            __device__ void clip_by_plane(int vid);
-            __device__ float4 compute_triangle_point(uchar3 t) const;
-            __device__ inline  uchar& ith_plane(uchar t, int i) {
+           __host__ __device__ ConvexCell(int p_seed, float* p_pts);
+           __host__ __device__ void clip_by_plane(int vid);
+           __host__ __device__ float4 compute_triangle_point(uchar3 t) const;
+           __host__ __device__ inline  uchar& ith_plane(uchar t, int i) {
                 //return reinterpret_cast<uchar *>(tr_data + threadIdx.x*MAX_T + t)[i];
                 return reinterpret_cast<uchar *>(&(tr(t)))[i];
             }
 
-            template <typename T> __device__ void inline swap_on_device(T& a, T& b) {
+            template <typename T>__host__ __device__ void inline swap_on_device(T& a, T& b) {
                 T c(a); a=b; b=c;
             }
 
-            __device__ int new_point(int vid);
-            __device__ void new_triangle(uchar i, uchar j, uchar k);
-            __device__ void compute_boundary();
+           __host__ __device__ int new_point(int vid);
+           __host__ __device__ void new_triangle(uchar i, uchar j, uchar k);
+           __host__ __device__ void compute_boundary();
 
             Status status;
 
@@ -104,7 +111,7 @@ namespace VBW {
             uchar first_boundary_;     
     };
 
-    __device__ ConvexCell::ConvexCell(int p_seed, float* p_pts) {
+   __host__ __device__ ConvexCell::ConvexCell(int p_seed, float* p_pts) {
         float eps  = .1;
         float xmin = -eps;
         float ymin = -eps;
@@ -138,15 +145,15 @@ namespace VBW {
         nb_t = 8;
     }
 
-    __device__ inline float det2x2(float a11, float a12, float a21, float a22) { 
+   __host__ __device__ inline float det2x2(float a11, float a12, float a21, float a22) { 
         return a11*a22 - a12*a21; 
     }
 
-    __device__ inline float det3x3(float a11, float a12, float a13, float a21, float a22, float a23, float a31, float a32, float a33) {
+   __host__ __device__ inline float det3x3(float a11, float a12, float a13, float a21, float a22, float a23, float a31, float a32, float a33) {
         return a11*det2x2(a22, a23, a32, a33) - a21*det2x2(a12, a13, a32, a33) + a31*det2x2(a12, a13, a22, a23);
     }
 
-    __device__ float4 ConvexCell::compute_triangle_point(uchar3 t) const {
+   __host__ __device__ float4 ConvexCell::compute_triangle_point(uchar3 t) const {
         float4 pi1 = clip(t.x);
         float4 pi2 = clip(t.y);
         float4 pi3 = clip(t.z);
@@ -158,7 +165,7 @@ namespace VBW {
         return result;
     }
 
-    __device__ void ConvexCell::new_triangle(uchar i, uchar j, uchar k) {
+   __host__ __device__ void ConvexCell::new_triangle(uchar i, uchar j, uchar k) {
         if (nb_t+1 >= MAX_T) { 
             status = triangle_overflow; 
             return; 
@@ -167,7 +174,7 @@ namespace VBW {
         nb_t++;
     }
 
-    __device__ int ConvexCell::new_point(int vid) {
+   __host__ __device__ int ConvexCell::new_point(int vid) {
         if (nb_v == MAX_CLIPS) { 
             status = vertex_overflow; 
             return -1; 
@@ -184,7 +191,7 @@ namespace VBW {
         return nb_v - 1;
     }
 
-    __device__ void ConvexCell::compute_boundary() {
+   __host__ __device__ void ConvexCell::compute_boundary() {
         while (first_boundary_ != END_OF_LIST) { // clean circular list of the boundary
             uchar last = first_boundary_;
             first_boundary_ = boundary_next(first_boundary_);
@@ -241,7 +248,7 @@ namespace VBW {
 #endif
     }
 
-    __device__ void  ConvexCell::clip_by_plane(int vid) {
+   __host__ __device__ void  ConvexCell::clip_by_plane(int vid) {
         int cur_v= new_point(vid);
         if (status == vertex_overflow) return;
         float4 eqn = clip(cur_v);
@@ -287,11 +294,10 @@ namespace VBW {
 }
 
 
-//###################  KERNEL   ######################
-__global__ void voro_cell_test_GPU_param(float * pts, int nbpts, unsigned int* neigs, VBW::Status* gpu_stat, int *out_tets, int* nb_out_tet, float* out_pts){
-    int seed = blockIdx.x * blockDim.x + threadIdx.x;
-    if (seed >= nbpts) return;
 
+
+//###################  KERNEL   ######################
+__host__ __device__ void compute_voro_cell(float * pts, int nbpts, unsigned int* neigs, VBW::Status* gpu_stat, int *out_tets, int* nb_out_tet, float* out_pts,int seed) {
     FOR(d, 3) out_pts[3 * seed + d] = pts[3 * seed + d];
 
     //create BBox
@@ -310,34 +316,47 @@ __global__ void voro_cell_test_GPU_param(float * pts, int nbpts, unsigned int* n
     float min_vertex_dist22seed = 1000000;
     FOR(i, cc.nb_t) {
         float4 pc = cc.compute_triangle_point(tr(i));
-        float3 diff2seed = make_float3(pc.x/pc.w - cc.voro_seed.x, pc.y / pc.w - cc.voro_seed.y, pc.z / pc.w - cc.voro_seed.z);
+        float3 diff2seed = make_float3(pc.x / pc.w - cc.voro_seed.x, pc.y / pc.w - cc.voro_seed.y, pc.z / pc.w - cc.voro_seed.z);
         float d22seed = diff2seed.x*diff2seed.x + diff2seed.y*diff2seed.y + diff2seed.z*diff2seed.z;
         min_vertex_dist22seed = min(d22seed, min_vertex_dist22seed);
     }
     float max_neig_dist22seed = 0;
     FOR(v, DEFAULT_NB_PLANES) {
         unsigned int vid = neigs[DEFAULT_NB_PLANES * seed + v];
-        float3 diff2seed = make_float3(pts[3*vid] - cc.voro_seed.x, pts[3 * vid+1] - cc.voro_seed.y, pts[3 * vid+2] - cc.voro_seed.z);
+        float3 diff2seed = make_float3(pts[3 * vid] - cc.voro_seed.x, pts[3 * vid + 1] - cc.voro_seed.y, pts[3 * vid + 2] - cc.voro_seed.z);
         float d22seed = diff2seed.x*diff2seed.x + diff2seed.y*diff2seed.y + diff2seed.z*diff2seed.z;
         max_neig_dist22seed = max(d22seed, max_neig_dist22seed);
     }
     gpu_stat[seed] = cc.status;
-    if (max_neig_dist22seed<4* min_vertex_dist22seed)
-         gpu_stat[seed] = VBW::security_ray_not_reached;
+    if (max_neig_dist22seed<4 * min_vertex_dist22seed)
+        gpu_stat[seed] = VBW::security_ray_not_reached;
 
+    //output tets
 #if OUTPUT_TETS
     FOR(t, cc.nb_t) {
         if (tr(t).x > 5 && tr(t).y > 5 && tr(t).z > 5) {
-            uint4 tet = make_uint4(cc.voro_id,0,0,0);
+            uint4 tet = make_uint4(cc.voro_id, 0, 0, 0);
             tet.y = cc.vorother_id[tr(t).x];
             tet.z = cc.vorother_id[tr(t).y];
             tet.w = cc.vorother_id[tr(t).z];
+#ifdef __CUDA_ARCH__
             int top = atomicAdd(nb_out_tet, 1);
-            out_tets[top* 4 ] = cc.voro_id;
+#else 
+            (*nb_out_tet)++;
+            int top = *nb_out_tet ;
+#endif
+            out_tets[top * 4] = cc.voro_id;
             FOR(f, 3) out_tets[top * 4 + f + 1] = cc.vorother_id[cc.ith_plane(t, f)];
         }
     }
 #endif    
+
+}
+
+__global__ void voro_cell_test_GPU_param(float * pts, int nbpts, unsigned int* neigs, VBW::Status* gpu_stat, int *out_tets, int* nb_out_tet, float* out_pts) {
+    int seed = blockIdx.x * blockDim.x + threadIdx.x;
+    if (seed >= nbpts) return;
+    compute_voro_cell(pts, nbpts, neigs, gpu_stat, out_tets, nb_out_tet, out_pts, seed);
 }
 
 template <class T> struct GPUVar {
@@ -377,6 +396,7 @@ template <class T> struct GPUBuffer {
 //###################  CALL FUNCTION ######################
 void compute_voro_diagram_GPU(std::vector<float>& pts, std::vector<int>& out_tets, int block_size , int &nb_tets, std::vector<VBW::Status> &stat, std::vector<float>& out_pts) {
     int nbpts = pts.size() / 3;
+    nb_tets = 0;
     kn_problem *kn = NULL;
     {
         Stopwatch W("GPU KNN");
@@ -420,7 +440,40 @@ void compute_voro_diagram_GPU(std::vector<float>& pts, std::vector<int>& out_tet
         gpu_nb_out_tets.gpu2cpu();
     }
     kn_free(&kn);
+    std::cerr << " \n\n\n---------Summary of success/failure------------\n";
+    std::vector<int> nb_statuss(5, 0);
+    FOR(i, stat.size()) nb_statuss[stat[i]]++;
+    FOR(r, 5) std::cerr << " " << VBW::StatusStr[r] << "   " << nb_statuss[r] << "\n";
 }
+
+void compute_voro_diagram_CPU(
+    std::vector<float>& pts, std::vector<int>& out_tets, int &nb_tets, std::vector<VBW::Status> &stat, std::vector<float>& out_pts
+) {
+    nb_tets = 0;
+    int nbpts = pts.size() / 3;
+    kn_problem *kn = NULL;
+    {
+        Stopwatch W("GPU KNN");
+        kn = kn_prepare(pts.data(), nbpts);
+        kn_solve(kn);
+        kn_print_stats(kn);
+    }
+    float* nvpts = kn_get_points(kn);
+    unsigned int* knn = kn_get_knearests(kn);
+    {
+        Stopwatch W("CPU VORO KERNEL");
+        FOR(seed, nbpts)
+            compute_voro_cell(nvpts, nbpts, knn, stat.data(), out_tets.data(), &nb_tets, out_pts.data(), seed);
+    }
+    FOR(i, 3 * nbpts) pts[i] = nvpts[i];
+
+    std::cerr << " \n\n\n---------Summary of success/failure------------\n";
+    std::vector<int> nb_statuss(5, 0);
+    FOR(i, stat.size()) nb_statuss[stat[i]]++;
+    FOR(r, 5) std::cerr << " " << VBW::StatusStr[r] << "   " << nb_statuss[r] << "\n";
+}
+
+
 
 void update_knn(float * pts, int nbpts, int* neighbors) {
     Stopwatch W("Generate KNN");
@@ -453,21 +506,18 @@ void compute_voro_diagram(std::vector<float>& pts, std::vector<int>& out_tets, i
 
     std::vector<float> out_pts(pts.size(),0);
 
-    // test block size
-    //FOR(iter, 10)
-    int iter = 5; {
-        VBW::gs.reset();
 
+    if (false){// CPU test /debug/stat
+        Stopwatch W("CPU run");
+        compute_voro_diagram_CPU(pts, out_tets, nb_tets, stat, out_pts);
+        VBW::gs.show();
+    }
+    
+    int iter = 5; {
         Stopwatch W("GPU run");
         int block_size = pow(2,iter);
         std::cerr << " block_size = "<< block_size << std::endl;
         compute_voro_diagram_GPU(pts, out_tets, block_size , nb_tets, stat, out_pts);
-
-        VBW::gs.show();
-        std::cerr << " \n\n\n---------Summary of success/failure------------\n";
-        std::vector<int> nb_statuss(5, 0);
-        FOR(i, stat.size()) nb_statuss[stat[i]]++;
-        FOR(r, 5) std::cerr << " " << VBW::StatusStr[r] << "   " << nb_statuss[r] << "\n";
     }
 
 }
