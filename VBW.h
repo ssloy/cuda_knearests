@@ -320,7 +320,7 @@ __global__ void voro_cell_test_GPU_param(float * pts, int nbpts, unsigned int* n
     gpu_stat[seed] = cc.status;
 
 #if OUTPUT_TETS
-    FOR(t, nb_t) {
+    FOR(t, cc.nb_t) {
         if (tr[threadIdx.x*MAX_T+t].x > 5 && tr[threadIdx.x*MAX_T+t].y > 5 && tr[threadIdx.x*MAX_T+t].z > 5) {
             uint4 tet = make_uint4(cc.voro_id,0,0,0);
             tet.y = cc.vorother_id[tr[threadIdx.x*MAX_T+t].x];

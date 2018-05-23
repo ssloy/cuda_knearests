@@ -9,7 +9,7 @@
 #define MAX_CLIPS  41
 #define MAX_T  64
 
-#define OUTPUT_TETS 0
+#define OUTPUT_TETS 1
 
 #include "VBW.h"
 #include "stopwatch.h"
