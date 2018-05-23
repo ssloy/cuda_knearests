@@ -257,7 +257,6 @@ namespace VBW {
 
         // Step 1: find conflicts
         int i = 0;
-        float dmax2 = 0;
         while (i < nb_t) {
             float4 pc = compute_triangle_point(tr(i));
             // check conflict
