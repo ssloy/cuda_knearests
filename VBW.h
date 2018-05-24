@@ -20,6 +20,17 @@ typedef unsigned char uchar;  // local indices with special values
 
 
 #ifdef __CUDA_ARCH__
+#define IF_CPU(x) 
+#define IF_GPU(x) x
+#else
+#define IF_CPU(x) x 
+#define IF_GPU(x) 
+#endif
+
+
+
+
+#ifdef __CUDA_ARCH__
 __shared__ uchar3 tr_data[32 * MAX_T]; // memory pool for chained lists of triangles
 __shared__ uchar boundary_next_data[32 * MAX_CLIPS];
 __shared__ float4 clip_data[32 * MAX_CLIPS]; // clipping planes
@@ -60,6 +71,22 @@ __host__ __device__ float dot3(float4 A, float4 B) {
 __host__ __device__ float4 normalize4(float4 A) {
     return make_float4(A.x / A.w, A.y / A.w, A.z / A.w, 1);
 }
+__host__ __device__ float norm23(float4 A) {
+    return dot3(A, A);
+}
+__host__ __device__ float4 mul3(float s, float4 A) {
+    return make_float4(s*A.x, s*A.y, s*A.z, 1.);
+}
+__host__ __device__ float4 cross3(float4 A, float4 B) {
+    return make_float4(A.y*B.z - A.z*B.y, A.z*B.x - A.x*B.z, A.x*B.y - A.y*B.x, 0);
+}
+__host__ __device__ float4 plane_from_point_and_normal(float4 P, float4 n) {
+    return  make_float4(n.x, n.y, n.z, -dot3(P, n));
+}
+__host__ __device__ float dist2plane(float4 P, float4 plane) { 
+    return dot4(P,plane); 
+}
+
 __host__ __device__ inline float det2x2(float a11, float a12, float a21, float a22) {
     return a11*a22 - a12*a21;
 }
@@ -67,12 +94,47 @@ __host__ __device__ inline float det3x3(float a11, float a12, float a13, float a
     return a11*det2x2(a22, a23, a32, a33) - a21*det2x2(a12, a13, a32, a33) + a31*det2x2(a12, a13, a22, a23);
 }
 
+__host__ __device__ void get_tet_volume(float& volume, float4 A, float4 B, float4 C) {
+    volume = -det3x3(A.x, A.y, A.z, B.x, B.y, B.z, C.x, C.y, C.z);
+}
+__host__ __device__ void get_tet_volume_and_barycenter(float4& bary, float& volume, float4 A, float4 B, float4 C, float4 D) {
+    get_tet_volume(volume, minus4(A, D), minus4(B, D), minus4(C, D));
+    bary = make_float4(.25*(A.x + B.x + C.x + D.x), .25*(A.y + B.y + C.y + D.y), .25*(A.z + B.z + C.z + D.z),1);
+}
+
+__host__ __device__ float4 project_on_plane(float4 P, float4 plane) {
+    float4 n = make_float4(plane.x, plane.y, plane.z,0);
+    float lambda;
+    lambda = (dot3(n, P) + plane.w) / norm23(n);
+    return plus4(P, mul3(-lambda, n));
+}
+
+
+
 template <typename T>__host__ __device__ void inline swap_on_device(T& a, T& b) {
     T c(a); a = b; b = c;
 }
 
 
-
+void export_histogram(std::vector<int> h, const std::string& file_name, const std::string& xlabel, const std::string& ylabel) {
+    {
+        float sum = 0;
+        FOR(i, h.size()) sum += .01*float(h[i]);
+        int last = 0;
+        FOR(i, h.size() - 1) if (h[i] > 0) last = i;
+        std::ofstream out("C:\\DATA\\tmp.py");  
+        out << "import matplotlib.pyplot as plt\n";
+        out << "plt.plot([";
+        FOR(i, last) out << float(h[i]) / sum << " , ";
+        out << float(h[last]) / sum;
+        out << "], drawstyle = \"steps\")\n";
+        out << "plt.ylabel('" + ylabel + "')\n";
+        out << "plt.xlabel('" + xlabel + "')\n";
+        out << "plt.savefig(\"C:/DATA/" + file_name + ".pdf\")\n";
+        out << "plt.show()\n";
+    }
+    system("python.exe C:\\DATA\\tmp.py");
+}
 
     struct GlobalStats {
         GlobalStats() { reset(); }
@@ -101,11 +163,11 @@ template <typename T>__host__ __device__ void inline swap_on_device(T& a, T& b) 
         std::vector<int> nb_clips_before_radius;
         std::vector<int> nb_removed_voro_vertex_per_clip;
         void show() {
-            //show_prop(nb_clips_before_radius, false, false," #clips ");
-            //show_prop(nb_removed_voro_vertex_per_clip, true, true, " #nb_removed_voro_vertex_per_clip ");
-            //show_prop(compute_boundary_iter, true, true, " #compute_boundary_iter ");
-            //show_prop(nbv, true, true, " #nbv ");
-            //show_prop(nbv, true, true, " #nbt ");
+            export_histogram(nb_clips_before_radius, "nb_clips_before_radius", "#required clip planes", "proportion %");
+            export_histogram(nbv, "nbv", "#intersecting clip planes", "proportion %");
+            export_histogram(nbt, "nbt", "#Voronoi vertices", "proportion %");
+            export_histogram(nb_removed_voro_vertex_per_clip, "nb_removed_voro_vertex_per_clip", "#R", "proportion %");
+            export_histogram(compute_boundary_iter, "compute_boundary_iter", "#iter compute void boundary", "proportion %");
         }
     } gs;
 
@@ -131,10 +193,8 @@ template <typename T>__host__ __device__ void inline swap_on_device(T& a, T& b) 
             int voro_id;
             float4 voro_seed;
             uchar nb_v;
-#if OUTPUT_TETS
-            int vorother_id[MAX_CLIPS]; 
-#endif        
             uchar first_boundary_;     
+            IF_OUTPUT_TET(int vorother_id[MAX_CLIPS];)
     };
 
     __host__ __device__ inline  uchar& ConvexCell::ith_plane(uchar t, int i) {
@@ -203,9 +263,9 @@ template <typename T>__host__ __device__ void inline swap_on_device(T& a, T& b) 
             *status = vertex_overflow; 
             return -1; 
         }
-#if OUTPUT_TETS
-        vorother_id[nb_v] = vid;
-#endif        
+
+        IF_OUTPUT_TET(vorother_id[nb_v] = vid;)
+
         float4 B = point_from_ptr3(pts + 3 * vid);
         float4 dir = minus4(voro_seed, B);
         float4 ave2 = plus4(voro_seed, B);
@@ -267,9 +327,8 @@ template <typename T>__host__ __device__ void inline swap_on_device(T& a, T& b) 
             t = nb_t;
             nb_conflicts--;
         }
-#ifndef __CUDA_ARCH__
-        gs.add_compute_boundary_iter(nb_iter);
-#endif
+
+        IF_CPU(gs.add_compute_boundary_iter(nb_iter);)
     }
 
    __host__ __device__ void  ConvexCell::clip_by_plane(int vid) {
@@ -292,9 +351,7 @@ template <typename T>__host__ __device__ void inline swap_on_device(T& a, T& b) 
             else i++;
         }
 
-#ifndef __CUDA_ARCH__
-        gs.add_clip(nb_conflicts);
-#endif
+        IF_CPU(gs.add_clip(nb_conflicts);)
 
         if (nb_conflicts == 0) {
             nb_v--;
@@ -317,11 +374,94 @@ template <typename T>__host__ __device__ void inline swap_on_device(T& a, T& b) 
 
 
 
+   void export_tet_set(std::string filename, std::vector<float4>& decompose_tet) {
+       std::ofstream out(filename);
+       out << decompose_tet.size() << " vertices" << std::endl;
+       out << decompose_tet.size() / 4 << " tets" << std::endl;
+       FOR(v, decompose_tet.size())   out << decompose_tet[v].x << " " << decompose_tet[v].y << " " << decompose_tet[v].z << std::endl;
+       FOR(j, decompose_tet.size() / 4)  out << "4 " << 4 * j << " " << 4 * j + 1 << " " << 4 * j + 2 << " " << 4 * j + 3 << " \n";
+   }
+
+
+   __host__ __device__ void get_tet_decomposition_of_vertex(ConvexCell& cc, int t, float4* P) {
+       float4 C = cc.voro_seed;
+       float4 A4 = cc.compute_triangle_point(tr(t));
+       float4 A = normalize4(A4);
+       FOR(i,3)        P[2*i] = project_on_plane(C, clip(cc.ith_plane(t,i)));
+       FOR(i, 3)        P[2 * i+1] = project_on_plane(A, plane_from_point_and_normal(C, cross3(minus4(P[2*i], C), minus4(P[(2*(i+1))%6], C))));
+   }
+
+
+   __host__ __device__ void export_bary_and_volume(ConvexCell& cc,float* out_pts,int seed) {
+  
+       float4 bary; float vol;
+       float4 bary_sum = make_float4(0, 0, 0,0); float vol_sum = 0;
+       float4 P[6];
+       float4 C = cc.voro_seed;
+       FOR(t, cc.nb_t) {
+           float4 A4 = cc.compute_triangle_point(tr(t));
+           float4 A = normalize4( A4);
+           get_tet_decomposition_of_vertex(cc, t, P);
+           FOR(i, 6) {
+               get_tet_volume_and_barycenter(bary, vol, P[i], P[(i+1)%6], C, A); 
+               bary_sum = plus4(bary_sum, mul3(vol, bary)); 
+               vol_sum += vol;
+           }
+       }
+       out_pts[3 * seed] = bary_sum.x / vol_sum;
+       out_pts[3 * seed + 1] = bary_sum.y / vol_sum;
+       out_pts[3 * seed + 2] = bary_sum.z / vol_sum;
+   }
+
+
+
+   std::vector<float4> decompose_tet;
+    __host__ void export_cell_decomposition(ConvexCell& cc) {
+       // compute bary
+       float4 P[6];
+       FOR(t, cc.nb_t) {
+           float4 A4 = cc.compute_triangle_point(tr(t));
+           float4 A = normalize4(A4);
+           get_tet_decomposition_of_vertex(cc, t, P);
+           FOR(i, 6) {
+               decompose_tet.push_back(P[i]);
+               decompose_tet.push_back(P[(i + 1) % 6]);
+               decompose_tet.push_back(cc.voro_seed);
+               decompose_tet.push_back(A);
+           }
+       }
+
+   }
+    __host__ void  export_decomposition() {
+        std::ofstream out("C:\\DATA\\outdecomp.tet");
+        out << decompose_tet.size() << " vertices" << std::endl;
+        out << decompose_tet.size() / 4 << " tets" << std::endl;
+        FOR(v, decompose_tet.size())   out << decompose_tet[v].x << " " << decompose_tet[v].y << " " << decompose_tet[v].z << std::endl;
+        FOR(j, decompose_tet.size() / 4)  out << "4 " << 4 * j << " " << 4 * j + 1 << " " << 4 * j + 2 << " " << 4 * j + 3 << " \n";
+    }
+
+
+   __host__ __device__ void output_tets(ConvexCell& cc, int *out_tets, int* nb_out_tet) {
+       FOR(t, cc.nb_t) {
+           if (tr(t).x > 5 && tr(t).y > 5 && tr(t).z > 5) {
+               uint4 tet = make_uint4(cc.voro_id, 0, 0, 0);
+               tet.y = cc.vorother_id[tr(t).x];
+               tet.z = cc.vorother_id[tr(t).y];
+               tet.w = cc.vorother_id[tr(t).z];
+               int top;
+               IF_GPU(top = atomicAdd(nb_out_tet, 1);)
+               IF_CPU((*nb_out_tet)++; top = *nb_out_tet;)
+               out_tets[top * 4] = cc.voro_id;
+               FOR(f, 3) out_tets[top * 4 + f + 1] = cc.vorother_id[cc.ith_plane(t, f)];
+           }
+       }
+   }
 
 
 //###################  KERNEL   ######################
    __host__ __device__ void compute_voro_cell(float * pts, int nbpts, unsigned int* neigs, Status* gpu_stat, int *out_tets, int* nb_out_tet, float* out_pts, int seed) {
-       FOR(d, 3) out_pts[3 * seed + d] = pts[3 * seed + d];
+       
+       IF_OUTPUT_BARY(FOR(d, 3) out_pts[3 * seed + d] = pts[3 * seed + d];)
 
        //create BBox
        ConvexCell cc(seed, pts, &(gpu_stat[seed]));
@@ -333,45 +473,38 @@ template <typename T>__host__ __device__ void inline swap_on_device(T& a, T& b) 
        }
 
        // check security ray
-       float min_vertex_dist22seed = 1000000;
-       FOR(i, cc.nb_t) {
-           float4 pc = cc.compute_triangle_point(tr(i));
-           pc = normalize4(pc);
-           float4 diff2seed = minus4(pc, cc.voro_seed);
-           float d22seed = dot3(diff2seed, diff2seed);
-           min_vertex_dist22seed = min(d22seed, min_vertex_dist22seed);
-       }
-       float max_neig_dist22seed = 0;
-       FOR(v, DEFAULT_NB_PLANES) {
-           unsigned int vid = neigs[DEFAULT_NB_PLANES * seed + v];
-           float4 pc = point_from_ptr3(pts + 3 * vid);
-           pc = normalize4(pc);
-           float4 diff2seed = minus4(pc, cc.voro_seed);
-           float d22seed = dot3(diff2seed, diff2seed);
-           max_neig_dist22seed = max(d22seed, max_neig_dist22seed);
-       }
-       if (max_neig_dist22seed < 4 * min_vertex_dist22seed)
-           gpu_stat[seed] = security_ray_not_reached;
-
-       //output tets
-#if OUTPUT_TETS
-       FOR(t, cc.nb_t) {
-           if (tr(t).x > 5 && tr(t).y > 5 && tr(t).z > 5) {
-               uint4 tet = make_uint4(cc.voro_id, 0, 0, 0);
-               tet.y = cc.vorother_id[tr(t).x];
-               tet.z = cc.vorother_id[tr(t).y];
-               tet.w = cc.vorother_id[tr(t).z];
-#ifdef __CUDA_ARCH__
-               int top = atomicAdd(nb_out_tet, 1);
-#else 
-               (*nb_out_tet)++;
-               int top = *nb_out_tet;
-#endif
-               out_tets[top * 4] = cc.voro_id;
-               FOR(f, 3) out_tets[top * 4 + f + 1] = cc.vorother_id[cc.ith_plane(t, f)];
+       {
+           // finds furthest voro vertex distance
+           float v_dist = 0;
+           FOR(i, cc.nb_t) {
+               float4 pc = cc.compute_triangle_point(tr(i));
+               pc = normalize4(pc);
+               float4 diff = minus4(pc, cc.voro_seed);
+               float d2 = dot3(diff, diff);
+               v_dist = max(d2, v_dist);
            }
+           //find furthest neigborgs distance
+           float neig_dist = 0;
+           FOR(v, DEFAULT_NB_PLANES) {
+               unsigned int vid = neigs[DEFAULT_NB_PLANES * seed + v];
+               float4 pc = point_from_ptr3(pts + 3 * vid);
+               float4 diff = minus4(pc, cc.voro_seed);
+               float d2 = dot3(diff, diff);
+               neig_dist = max(d2, neig_dist);
+           }
+           // reject cell without enough neighborgs
+           if (neig_dist < 4 * v_dist)
+               gpu_stat[seed] = security_ray_not_reached;
        }
-#endif    
+
+       
+       if (gpu_stat[seed] != success && gpu_stat[seed] != security_ray_not_reached) return;
+
+       IF_OUTPUT_BARY(export_bary_and_volume(cc, out_pts, seed));
+       IF_OUTPUT_TET(output_tets(cc, out_tets, nb_out_tet));
+       IF_EXPORT_DECOMPOSITION(if (seed == 2000) export_cell_decomposition(cc));
+       //IF_EXPORT_DECOMPOSITION(export_cell_decomposition(cc));
+
    }
 
 
@@ -426,7 +559,7 @@ template <class T> struct GPUBuffer {
 
 
 //----------------------------------FUNCTION TO CALL
-void compute_voro_diagram_GPU(std::vector<float>& pts, std::vector<int>& out_tets, int block_size , int &nb_tets, std::vector<Status> &stat, std::vector<float>& out_pts) {
+void compute_voro_diagram_GPU(std::vector<float>& pts, std::vector<int>& out_tets , int &nb_tets, std::vector<Status> &stat, std::vector<float>& out_pts, int block_size) {
     int nbpts = pts.size() / 3;
     nb_tets = 0;
     kn_problem *kn = NULL;
@@ -465,9 +598,8 @@ void compute_voro_diagram_GPU(std::vector<float>& pts, std::vector<int>& out_tet
         cudaMemcpy(pts.data(), kn->d_stored_points, kn->allocated_points * sizeof(float) * 3, cudaMemcpyDeviceToHost);
         cudaError_t err = cudaGetLastError();
         if (err != cudaSuccess) { fprintf(stderr, "Failed (1) (error code %s)!\n", cudaGetErrorString(err)); exit(EXIT_FAILURE); }
-#if OUTPUT_TETS
-        tets_w.gpu2cpu();
-#endif
+        IF_OUTPUT_TET(tets_w.gpu2cpu());
+        IF_OUTPUT_BARY(out_pts_w.gpu2cpu());
         gpu_stat.gpu2cpu();
         gpu_nb_out_tets.gpu2cpu();
     }
@@ -503,6 +635,7 @@ void compute_voro_diagram_CPU(
     {
         Stopwatch W("CPU VORO KERNEL");
         FOR(seed, nbpts) compute_voro_cell(nvpts, nbpts, knn, stat.data(), out_tets.data(), &nb_tets, out_pts.data(), seed);
+        IF_EXPORT_DECOMPOSITION(export_decomposition();)
     }
     FOR(i, 3 * nbpts) pts[i] = nvpts[i];
 
@@ -511,7 +644,8 @@ void compute_voro_diagram_CPU(
     std::vector<int> nb_statuss(5, 0);
     FOR(i, stat.size()) nb_statuss[stat[i]]++;
     FOR(r, 5) std::cerr << " " << StatusStr[r] << "   " << nb_statuss[r] << "\n";
-    gs.show();
+    
+    IF_EXPORT_HISTO(gs.show();)
 }
 
 #endif

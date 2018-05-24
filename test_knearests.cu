@@ -9,7 +9,11 @@
 #define MAX_CLIPS  41
 #define MAX_T  64
 
-#define OUTPUT_TETS 1
+#define IF_EXPORT_HISTO(x) 
+#define IF_OUTPUT_TET(x) x
+#define IF_OUTPUT_BARY(x) x
+
+#define IF_EXPORT_DECOMPOSITION(x) 
 
 #include "VBW.h"
 #include "stopwatch.h"
@@ -127,15 +131,15 @@ void printDevProp() {
 }
 
 
-void drop_xyz_file(float * pts, int nbpts) {
+void drop_xyz_file(std::vector<float>& pts) {
     std::fstream file;
     static int fileid = 0;
     char filename[1024];
-    sprintf(filename, "C:\\DATA\\drop_%d_.xyz", fileid);
+    sprintf(filename, "C:\\DATA\\drop_%03d_.xyz", fileid);
     fileid++;
     file.open(filename, std::ios_base::out);
-    file << nbpts << std::endl;
-    FOR(i, nbpts) file << pts[3 * i] << "  " << pts[3 * i + 1] << "  " << pts[3 * i + 2] << " \n";
+    file << pts.size()/3 << std::endl;
+    FOR(i, pts.size() / 3) file << pts[3 * i] << "  " << pts[3 * i + 1] << "  " << pts[3 * i + 2] << " \n";
     file.close();
 }
 
@@ -153,8 +157,9 @@ int main(int argc, char** argv) {
         std::cerr << argv[1] << ": could not load file" << std::endl;
         return 1;
     }
-
-/*
+    pts.resize(9000);
+    FOR(i, pts.size()) pts[i] =  1000.*double(rand()) / RAND_MAX;
+    /*
     int n=216;
     pts.resize(n*n*n*3);
     for (int x=0; x<n; x++) {
@@ -173,40 +178,40 @@ int main(int argc, char** argv) {
 */
 
     int nb_pts = pts.size()/3;
-#if OUTPUT_TETS    
-    std::vector<int> tets(nb_pts * 4 * 50);
-#else
+
+
     std::vector<int> tets(0);
-#endif
+    IF_OUTPUT_TET(tets.resize(nb_pts * 4 * 50);)
     int nb_tets = 0;
 
-    {
-        //compute_voro_diagram(pts,  tets, nb_tets);
-        int nbpts = pts.size() / 3;
-        std::vector<Status> stat(nbpts);
+    std::vector<float> out_pts(0);
+    IF_OUTPUT_BARY(out_pts.resize(pts.size(), 0);)
 
-        std::vector<float> out_pts(pts.size(), 0);
-
-
-        if (false) {// CPU test /debug/stat
-            Stopwatch W("CPU run");
-            compute_voro_diagram_CPU(pts, tets, nb_tets, stat, out_pts);
-            gs.show();
-        }
-
-        int iter = 5; {
+        std::vector<Status> stat(nb_pts);
+       
+        //{// CPU test /debug/stat
+        //    Stopwatch W("CPU run");
+        //    compute_voro_diagram_CPU(pts, tets, nb_tets, stat, out_pts); 
+        //}
+        {// single GPU run
+            int iter = 5; 
             Stopwatch W("GPU run");
             int block_size = pow(2, iter);
             std::cerr << " block_size = " << block_size << std::endl;
-            compute_voro_diagram_GPU(pts, tets, block_size, nb_tets, stat, out_pts);
+            compute_voro_diagram_GPU(pts, tets, nb_tets, stat, out_pts, block_size);
         }
-    }
 
-#if OUTPUT_TETS    
-    std::cerr << "EXPORT" << std::endl;
-    export_tet_mesh(pts.data(),nb_pts, tets.data(), nb_tets);
-#endif    
+        //{
+        //    Stopwatch W("Test Loyd");
+        //    FOR(it, 100) {
+        //        compute_voro_diagram_GPU(pts, tets, nb_tets, stat, out_pts, 32);
+        //        FOR(i, pts.size()) if (out_pts[i]<1000 && out_pts[i]>0 ) pts[i] = out_pts[i];
+        //        if (it%10==0) drop_xyz_file(out_pts);
+        //    }
+        //}
 
+    IF_OUTPUT_TET(export_tet_mesh(pts.data(), nb_pts, tets.data(), nb_tets);)
+    
     return 0;
 }
 
