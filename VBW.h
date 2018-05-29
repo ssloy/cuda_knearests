@@ -83,9 +83,7 @@ __host__ __device__ float4 cross3(float4 A, float4 B) {
 __host__ __device__ float4 plane_from_point_and_normal(float4 P, float4 n) {
     return  make_float4(n.x, n.y, n.z, -dot3(P, n));
 }
-__host__ __device__ float dist2plane(float4 P, float4 plane) { 
-    return dot4(P,plane); 
-}
+
 
 __host__ __device__ inline float det2x2(float a11, float a12, float a21, float a22) {
     return a11*a22 - a12*a21;
@@ -95,7 +93,7 @@ __host__ __device__ inline float det3x3(float a11, float a12, float a13, float a
 }
 
 __host__ __device__ void get_tet_volume(float& volume, float4 A, float4 B, float4 C) {
-    volume = -det3x3(A.x, A.y, A.z, B.x, B.y, B.z, C.x, C.y, C.z);
+    volume = -det3x3(A.x, A.y, A.z, B.x, B.y, B.z, C.x, C.y, C.z)/6.;
 }
 __host__ __device__ void get_tet_volume_and_barycenter(float4& bary, float& volume, float4 A, float4 B, float4 C, float4 D) {
     get_tet_volume(volume, minus4(A, D), minus4(B, D), minus4(C, D));
@@ -109,6 +107,11 @@ __host__ __device__ float4 project_on_plane(float4 P, float4 plane) {
     return plus4(P, mul3(-lambda, n));
 }
 
+__host__ __device__ float dist2plane(float4 P, float4 plane) {
+    float4 proj = project_on_plane(P, plane);
+    return sqrt(dot3(proj,P));
+    //return dot4(P, plane);
+}
 
 
 template <typename T>__host__ __device__ void inline swap_on_device(T& a, T& b) {
@@ -131,7 +134,7 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
         out << "plt.ylabel('" + ylabel + "')\n";
         out << "plt.xlabel('" + xlabel + "')\n";
         out << "plt.savefig(\"C:/DATA/" + file_name + ".pdf\")\n";
-        out << "plt.show()\n";
+        //out << "plt.show()\n";
     }
     system("python.exe C:\\DATA\\tmp.py");
 }
@@ -285,7 +288,7 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
         int nb_iter = 0;
         uchar t = nb_t;
         while (nb_conflicts>0) {
-            if (nb_iter++ >50) { 
+            if (nb_iter++ >100) { 
                * status = weird_cavity; 
                 return; 
             }
@@ -394,23 +397,77 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
 
    __host__ __device__ void export_bary_and_volume(ConvexCell& cc,float* out_pts,int seed) {
   
+       static float all_vol = 0;
        float4 bary; float vol;
        float4 bary_sum = make_float4(0, 0, 0,0); float vol_sum = 0;
        float4 P[6];
        float4 C = cc.voro_seed;
        FOR(t, cc.nb_t) {
            float4 A4 = cc.compute_triangle_point(tr(t));
-           float4 A = normalize4( A4);
+           float4 A = normalize4(A4);
            get_tet_decomposition_of_vertex(cc, t, P);
            FOR(i, 6) {
-               get_tet_volume_and_barycenter(bary, vol, P[i], P[(i+1)%6], C, A); 
+               get_tet_volume_and_barycenter(bary, vol, P[i], P[(i + 1) % 6], C, A);
                bary_sum = plus4(bary_sum, mul3(vol, bary)); 
                vol_sum += vol;
            }
        }
-       out_pts[3 * seed] = bary_sum.x / vol_sum;
-       out_pts[3 * seed + 1] = bary_sum.y / vol_sum;
-       out_pts[3 * seed + 2] = bary_sum.z / vol_sum;
+       
+      
+
+#if REPLACE_BARY_BY_PRESSURE
+       FOR(t, cc.nb_t) {
+           float4 A4 = cc.compute_triangle_point(tr(t));
+           float4 A = normalize4(A4);
+           get_tet_decomposition_of_vertex(cc, t, P);
+           FOR(i, 6) {
+               get_tet_volume_and_barycenter(bary, vol, P[i], P[(i + 1) % 6], C, A);
+               int clip_id = cc.ith_plane(t, ((i + 1) / 2) % 3);
+               //float triangle_area = 6.*vol / dist2plane(C,clip(clip_id));
+               float4 d0 = minus4(P[(i + 1) % 6], A);
+               float4 d1 = minus4(P[i] , A);
+               float4 cross = cross3(d0, d1);
+               float triangle_area = .5*sqrt(dot3(cross,cross));
+               if (vol < 1e-5) triangle_area *= -1.;
+
+               float4 dir = clip(clip_id);
+               dir.w = sqrt(dot3(dir, dir));
+               dir = normalize4(dir);
+               
+
+
+
+               if (clip_id >5) {
+                   float pressure = 1. / vol_sum;
+                   float str = -triangle_area* pressure;
+
+                   int ne = cc.vorother_id[clip_id];
+
+                   out_pts[3 * ne + 0] += str * dir.x;
+                   out_pts[3 * ne + 1] += str * dir.y;
+                   out_pts[3 * ne + 2] += str * dir.z;
+               }
+               else {
+                   float pressure = 3000./ 1e9;
+                   float str = triangle_area* pressure;
+                   out_pts[3 * seed + 0] += str *dir.x;
+                   out_pts[3 * seed + 1] += str *dir.y;
+                   out_pts[3 * seed + 2] += str * dir.z;
+
+               }
+
+
+               //point_from_ptr3(cc.pts + cc.vorother_id[clip_id]);
+               //printf("%f \n",triangle_area);
+           }
+       }
+#else
+       //IF_CPU(all_vol += vol_sum; std::cerr << all_vol << "  \n";)
+       out_pts[3 * seed] = bary_sum.x / vol_sum - C.x;
+       out_pts[3 * seed + 1] = bary_sum.y / vol_sum - C.y;
+       out_pts[3 * seed + 2] = bary_sum.z / vol_sum - C.z;
+       return;
+#endif
    }
 
 
@@ -433,7 +490,13 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
 
    }
     __host__ void  export_decomposition() {
-        std::ofstream out("C:\\DATA\\outdecomp.tet");
+        static int fileid = 0; 
+        fileid++;
+        char filename[1024];
+        sprintf(filename, "C:\\DATA\\tet_%03d_decomp.tet", fileid);
+        std::cerr << filename << std::endl;
+        std::ofstream out(filename);
+        //std::ofstream out("C:\\DATA\\outdecomp.tet");
         out << decompose_tet.size() << " vertices" << std::endl;
         out << decompose_tet.size() / 4 << " tets" << std::endl;
         FOR(v, decompose_tet.size())   out << decompose_tet[v].x << " " << decompose_tet[v].y << " " << decompose_tet[v].z << std::endl;
@@ -442,6 +505,7 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
 
 
    __host__ __device__ void output_tets(ConvexCell& cc, int *out_tets, int* nb_out_tet) {
+       #ifdef OUTPUT_TET
        FOR(t, cc.nb_t) {
            if (tr(t).x > 5 && tr(t).y > 5 && tr(t).z > 5) {
                uint4 tet = make_uint4(cc.voro_id, 0, 0, 0);
@@ -455,14 +519,13 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
                FOR(f, 3) out_tets[top * 4 + f + 1] = cc.vorother_id[cc.ith_plane(t, f)];
            }
        }
+#endif
    }
 
 
 //###################  KERNEL   ######################
    __host__ __device__ void compute_voro_cell(float * pts, int nbpts, unsigned int* neigs, Status* gpu_stat, int *out_tets, int* nb_out_tet, float* out_pts, int seed) {
        
-       IF_OUTPUT_BARY(FOR(d, 3) out_pts[3 * seed + d] = pts[3 * seed + d];)
-
        //create BBox
        ConvexCell cc(seed, pts, &(gpu_stat[seed]));
 
@@ -487,7 +550,10 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
            float neig_dist = 0;
            FOR(v, DEFAULT_NB_PLANES) {
                unsigned int vid = neigs[DEFAULT_NB_PLANES * seed + v];
-               float4 pc = point_from_ptr3(pts + 3 * vid);
+
+               if (vid >= nbpts) continue;
+                   //IF_CPU(if (vid >= nbpts) std::cerr << vid << " ";)
+                float4 pc = point_from_ptr3(pts + 3 * vid);
                float4 diff = minus4(pc, cc.voro_seed);
                float d2 = dot3(diff, diff);
                neig_dist = max(d2, neig_dist);
@@ -499,11 +565,11 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
 
        
        if (gpu_stat[seed] != success && gpu_stat[seed] != security_ray_not_reached) return;
+       if (gpu_stat[seed] != success ) return;
 
-       IF_OUTPUT_BARY(export_bary_and_volume(cc, out_pts, seed));
+       IF_OUTPUT_P2BARY(export_bary_and_volume(cc, out_pts, seed));
        IF_OUTPUT_TET(output_tets(cc, out_tets, nb_out_tet));
-       IF_EXPORT_DECOMPOSITION(if (seed == 2000) export_cell_decomposition(cc));
-       //IF_EXPORT_DECOMPOSITION(export_cell_decomposition(cc));
+       IF_EXPORT_DECOMPOSITION(export_cell_decomposition(cc));
 
    }
 
@@ -540,7 +606,7 @@ template <class T> struct GPUVar {
 
 template <class T> struct GPUBuffer {
     void init(T* data) {
-        std::cerr << "GPU: " << size * sizeof(T)/1048576 << " Mb used" << std::endl;
+        IF_VERBOSE(std::cerr << "GPU: " << size * sizeof(T)/1048576 << " Mb used" << std::endl);
         cpu_data = data;
         cuda_check(cudaMalloc((void**)& gpu_data, size * sizeof(T)));
         cpu2gpu();
@@ -559,24 +625,24 @@ template <class T> struct GPUBuffer {
 
 
 //----------------------------------FUNCTION TO CALL
-void compute_voro_diagram_GPU(std::vector<float>& pts, std::vector<int>& out_tets , int &nb_tets, std::vector<Status> &stat, std::vector<float>& out_pts, int block_size) {
+void compute_voro_diagram_GPU(std::vector<float>& pts, std::vector<int>& out_tets , int &nb_tets, std::vector<Status> &stat, std::vector<float>& out_pts, unsigned int ** permutation, int block_size) {
     int nbpts = pts.size() / 3;
     nb_tets = 0;
     kn_problem *kn = NULL;
     {
-        Stopwatch W("GPU KNN");
+        IF_VERBOSE(Stopwatch W("GPU KNN"));
         kn = kn_prepare(pts.data(), nbpts);
         kn_solve(kn);
         kn_print_stats(kn);
     }
 
-
+    IF_OUTPUT_TET(FOR(i, pts.size()) out_pts[i] = 0;)
     GPUBuffer<float> out_pts_w(out_pts);
     GPUBuffer<int> tets_w(out_tets);
     GPUBuffer<Status> gpu_stat(stat);
     GPUVar<int> gpu_nb_out_tets(nb_tets);
     {
-        Stopwatch W("GPU voro kernel only");
+        IF_VERBOSE(Stopwatch W("GPU voro kernel only"));
 
         cudaEvent_t start, stop;
         cudaEventCreate(&start);
@@ -591,23 +657,27 @@ void compute_voro_diagram_GPU(std::vector<float>& pts, std::vector<int>& out_tet
         cudaEventSynchronize(stop);
         float milliseconds = 0;
         cudaEventElapsedTime(&milliseconds, start, stop);
-        std::cerr << "kn voro: " << milliseconds << " msec" << std::endl;
+        IF_VERBOSE(std::cerr << "kn voro: " << milliseconds << " msec" << std::endl);
     }
     {
-        Stopwatch W("copy data back to the cpu");
+        IF_VERBOSE(Stopwatch W("copy data back to the cpu"));
         cudaMemcpy(pts.data(), kn->d_stored_points, kn->allocated_points * sizeof(float) * 3, cudaMemcpyDeviceToHost);
         cudaError_t err = cudaGetLastError();
         if (err != cudaSuccess) { fprintf(stderr, "Failed (1) (error code %s)!\n", cudaGetErrorString(err)); exit(EXIT_FAILURE); }
         IF_OUTPUT_TET(tets_w.gpu2cpu());
-        IF_OUTPUT_BARY(out_pts_w.gpu2cpu());
+        IF_OUTPUT_P2BARY(out_pts_w.gpu2cpu());
         gpu_stat.gpu2cpu();
         gpu_nb_out_tets.gpu2cpu();
     }
+
+    if (permutation != NULL) *permutation = kn_get_permutation(kn);
+
     kn_free(&kn);
-    std::cerr << " \n\n\n---------Summary of success/failure------------\n";
+    IF_VERBOSE(std::cerr << " \n\n\n---------Summary of success/failure------------\n");
     std::vector<int> nb_statuss(5, 0);
     FOR(i, stat.size()) nb_statuss[stat[i]]++;
-    FOR(r, 5) std::cerr << " " << StatusStr[r] << "   " << nb_statuss[r] << "\n";
+    IF_VERBOSE(FOR(r, 5) std::cerr << " " << StatusStr[r] << "   " << nb_statuss[r] << "\n";)
+        std::cerr << " " << StatusStr[4] << "   " << nb_statuss[4] << " /  " << nbpts << "\n";
 }
 
 //#################################################################################"
@@ -615,7 +685,7 @@ void compute_voro_diagram_GPU(std::vector<float>& pts, std::vector<int>& out_tet
 //#################################################################################"
 
 void compute_voro_diagram_CPU(
-    std::vector<float>& pts, std::vector<int>& out_tets, int &nb_tets, std::vector<Status> &stat, std::vector<float>& out_pts
+    std::vector<float>& pts, std::vector<int>& out_tets, int &nb_tets, std::vector<Status> &stat, std::vector<float>& out_pts,unsigned int ** permutation
 ) {
     nb_tets = 0;
     int nbpts = pts.size() / 3;
@@ -634,17 +704,24 @@ void compute_voro_diagram_CPU(
     // run voro on the cpu
     {
         Stopwatch W("CPU VORO KERNEL");
-        FOR(seed, nbpts) compute_voro_cell(nvpts, nbpts, knn, stat.data(), out_tets.data(), &nb_tets, out_pts.data(), seed);
-        IF_EXPORT_DECOMPOSITION(export_decomposition();)
+        IF_OUTPUT_TET(FOR(i, pts.size()) out_pts[i] = 0;)
+            FOR(seed, nbpts) {
+            compute_voro_cell(nvpts, nbpts, knn, stat.data(), out_tets.data(), &nb_tets, out_pts.data(), seed);
+            IF_EXPORT_DECOMPOSITION(export_decomposition();)
+                decompose_tet.clear();
+        }
     }
     FOR(i, 3 * nbpts) pts[i] = nvpts[i];
+    if (permutation!=NULL) *permutation = kn_get_permutation(kn);
 
+    
     // ouput stats
-    std::cerr << " \n\n\n---------Summary of success/failure------------\n";
+    IF_VERBOSE(std::cerr << " \n\n\n---------Summary of success/failure------------\n");
+
     std::vector<int> nb_statuss(5, 0);
     FOR(i, stat.size()) nb_statuss[stat[i]]++;
-    FOR(r, 5) std::cerr << " " << StatusStr[r] << "   " << nb_statuss[r] << "\n";
-    
+    IF_VERBOSE(FOR(r, 5) std::cerr << " " << StatusStr[r] << "   " << nb_statuss[r] << "\n";)
+        std::cerr << " " << StatusStr[4] << "   " << nb_statuss[4] << " /  "<< nbpts <<"\n";
     IF_EXPORT_HISTO(gs.show();)
 }
 

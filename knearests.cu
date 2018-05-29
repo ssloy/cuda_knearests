@@ -12,12 +12,11 @@
 #include <random>
 #include <float.h>
 
+#include "params.h"
 #include "knearests.h"
 
 // ------------------------------------------------------------
 
-#define DEFAULT_NB_PLANES        35
-#define POINTS_PER_BLOCK 64
 
 // ------------------------------------------------------------
 
@@ -192,7 +191,7 @@ void kn_firstbuild(kn_problem *kn, float *d_points, int numpoints) {
 
     float milliseconds = 0;
     cudaEventElapsedTime(&milliseconds, start, stop);
-    std::cerr << "kn_firstbuild: " << milliseconds << " msec" << std::endl; 
+    IF_VERBOSE(std::cerr << "kn_firstbuild: " << milliseconds << " msec" << std::endl;)
 }
 
 // ------------------------------------------------------------
@@ -325,7 +324,7 @@ kn_problem *kn_prepare(float *points, int numpoints) {
 
     // we no longer need the initial points
     cudaFree(d_points);
-    std::cerr << "GPU memory used: " << memory_used/1048576 << " Mb" << std::endl;
+    IF_VERBOSE(std::cerr << "GPU memory used: " << memory_used/1048576 << " Mb" << std::endl);
     return kn;
 }
 
@@ -339,7 +338,7 @@ void kn_solve(kn_problem *kn) {
     int threadsPerBlock = POINTS_PER_BLOCK;
     int blocksPerGrid = (kn->allocated_points + threadsPerBlock - 1) / POINTS_PER_BLOCK;
 
-    std::cerr << "threads per block: " << threadsPerBlock << ", blocks per grid: " << blocksPerGrid << std::endl;
+    IF_VERBOSE(std::cerr << "threads per block: " << threadsPerBlock << ", blocks per grid: " << blocksPerGrid << std::endl);
 
     cudaEventRecord(start);
 
@@ -359,7 +358,7 @@ void kn_solve(kn_problem *kn) {
     cudaEventSynchronize(stop);
     float milliseconds = 0;
     cudaEventElapsedTime(&milliseconds, start, stop);
-    std::cerr << "kn_solve: " << milliseconds << " msec" << std::endl;
+    IF_VERBOSE(std::cerr << "kn_solve: " << milliseconds << " msec" << std::endl);
 }
 
 // ------------------------------------------------------------
@@ -427,10 +426,10 @@ void kn_print_stats(kn_problem *kn) {
         cmax = max(cmax, counters[c]);
         tot += counters[c];
     }
-    std::cerr << "Grid:  points per cell: " << cmin << " (min), " << cmax << " (max), " << (kn->allocated_points)/(float)(kn->dimx*kn->dimy*kn->dimz) << " avg, total " << tot << std::endl;
-    for (auto H : histo) {
-        std::cerr << "[" << H.first << "] => " << H.second << std::endl;
-    }
+    IF_VERBOSE(std::cerr << "Grid:  points per cell: " << cmin << " (min), " << cmax << " (max), " << (kn->allocated_points)/(float)(kn->dimx*kn->dimy*kn->dimz) << " avg, total " << tot << std::endl);
+    //for (auto H : histo) {
+    //    std::cerr << "[" << H.first << "] => " << H.second << std::endl;
+    //}
     free(counters);
 }
 
