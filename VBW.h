@@ -140,8 +140,9 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
         FOR(i, h.size() - 1) if (h[i] > 0) last = i;
 #if defined(__linux__)
         std::ofstream out("tmp.py");
-#endif
+#else
         std::ofstream out("C:\\DATA\\tmp.py");
+#endif        
         out << "import matplotlib.pyplot as plt\n";
         out << "plt.plot([";
         FOR(i, last) out << float(h[i]) / sum << " , ";
