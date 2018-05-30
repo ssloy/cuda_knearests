@@ -144,12 +144,16 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
         std::ofstream out("C:\\DATA\\tmp.py");
 #endif        
         out << "import matplotlib.pyplot as plt\n";
-        out << "plt.plot([";
+        out << "y = [";
         FOR(i, last) out << float(h[i]) / sum << " , ";
         out << float(h[last]) / sum;
-        out << "], drawstyle = \"steps\")\n";
-        out << "plt.ylabel('" + ylabel + "')\n";
-        out << "plt.xlabel('" + xlabel + "')\n";
+        out << "]\n";
+        out << "x = [v-.5 for v in range(len(y))]\n";
+        out << "plt.fill_between(x, [0 for i in y], y, step=\"post\", alpha=.8)\n";
+        out << "#plt.step(x, y, where='post')\n";
+        out << "plt.tick_params(axis='both', which='major', labelsize=12)\n";
+        out << "plt.ylabel('" + ylabel + "', fontsize=14)\n";
+        out << "plt.xlabel('" + xlabel + "', fontsize=14)\n";
 #if defined(__linux__)
         out << "plt.show()\n";
     }

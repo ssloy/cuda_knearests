@@ -75,7 +75,7 @@ bool load_file(const char* filename, std::vector<float>& xyz, bool normalize=tru
             xyz[i*3+2] = 1000.f*(xyz[i*3+2]-zmin)/maxside;
         }
         get_bbox(xyz, xmin, ymin, zmin, xmax, ymax, zmax);
-        std::cerr << "bbox [" << xmin << ":" << xmax << "], [" << ymin << ":" << ymax << ", [" << zmin << ":" << zmax << "]" << std::endl;
+        std::cerr << "bbox [" << xmin << ":" << xmax << "], [" << ymin << ":" << ymax << "], [" << zmin << ":" << zmax << "]" << std::endl;
     }
     return true;
 }
