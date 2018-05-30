@@ -163,7 +163,7 @@ int main(int argc, char** argv) {
         int nb_points = points.size()/3;
         Stopwatch W("knn gpu");
 
-        kn_problem *kn = kn_prepare(points.data(), nb_points);
+        kn_problem *kn = kn_prepare((float3 *)points.data(), nb_points);
         kn_solve(kn);
         kn_print_stats(kn);
 
