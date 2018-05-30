@@ -1,13 +1,13 @@
 // default settings
-//#define POINTS_PER_BLOCK 64
-//#define DEFAULT_NB_PLANES 50
-//#define MAX_CLIPS  45
-//#define MAX_T  50
-
-#define POINTS_PER_BLOCK 64
-#define DEFAULT_NB_PLANES 40
+#define POINTS_PER_BLOCK 32
+#define DEFAULT_NB_PLANES 150
 #define MAX_CLIPS  45
-#define MAX_T  60
+#define MAX_T  64
+
+//#define POINTS_PER_BLOCK 64
+//#define DEFAULT_NB_PLANES 40
+//#define MAX_CLIPS  45
+//#define MAX_T  60
 
 
 #define IF_EXPORT_HISTO(x) x

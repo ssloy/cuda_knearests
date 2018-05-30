@@ -138,7 +138,10 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
         if (sum == 0) sum = 1;
         int last = 0;
         FOR(i, h.size() - 1) if (h[i] > 0) last = i;
-        std::ofstream out("C:\\DATA\\tmp.py");  
+#if defined(__linux__)
+        std::ofstream out("tmp.py");
+#endif
+        std::ofstream out("C:\\DATA\\tmp.py");
         out << "import matplotlib.pyplot as plt\n";
         out << "plt.plot([";
         FOR(i, last) out << float(h[i]) / sum << " , ";
@@ -146,10 +149,15 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
         out << "], drawstyle = \"steps\")\n";
         out << "plt.ylabel('" + ylabel + "')\n";
         out << "plt.xlabel('" + xlabel + "')\n";
+#if defined(__linux__)
+        out << "plt.show()\n";
+    }
+    system("python3 *.py");
+#else
         out << "plt.savefig(\"C:/DATA/" + file_name + ".pdf\")\n";
-        //out << "plt.show()\n";
     }
     system("python.exe C:\\DATA\\tmp.py");
+#endif
 }
 
     struct GlobalStats {
@@ -201,6 +209,7 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
            __host__ __device__ int new_point(int vid);
            __host__ __device__ void new_triangle(uchar i, uchar j, uchar k);
            __host__ __device__ void compute_boundary();
+           __host__ __device__  bool security_ray_is_reached(float4 last_neig);
 
             Status* status;
             uchar nb_t;
@@ -211,6 +220,25 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
             uchar nb_v;
             uchar first_boundary_;     
     };
+
+
+    __host__ __device__  bool ConvexCell::security_ray_is_reached(float4 last_neig) {
+        // finds furthest voro vertex distance2
+        float v_dist = 0;
+        FOR(i, nb_t) {
+            float4 pc = compute_triangle_point(tr(i));
+            pc = normalize4(pc);
+            float4 diff = minus4(pc, voro_seed);
+            float d2 = dot3(diff, diff);
+            v_dist = max(d2, v_dist);
+        }
+        //compare to new neigborgs distance2
+        float4 pc = last_neig;
+        float4 diff = minus4(pc, voro_seed);
+        float d2 = dot3(diff, diff);
+        return (d2> 4 * v_dist);
+    }
+
 
     __host__ __device__ inline  uchar& ConvexCell::ith_plane(uchar t, int i) {
         return reinterpret_cast<uchar *>(&(tr(t)))[i];
@@ -454,6 +482,9 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
 
 
 
+
+
+
 //###################  KERNEL   ######################
    __host__ __device__ void compute_voro_cell(float * pts, int nbpts, unsigned int* neigs, Status* gpu_stat, float* out_pts, int seed) {
 
@@ -464,52 +495,27 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
 
        // clip by halfspaces
        FOR(v, DEFAULT_NB_PLANES) {
-           //IF_CPU(export_bary_and_volume(cc, out_pts, seed););
            cc.clip_by_plane(neigs[DEFAULT_NB_PLANES * seed + v]);
-           if (gpu_stat[seed] == weird_cavity) {
-               //IF_CPU(export_decomposition();)
+#ifndef __CUDA_ARCH__
+           if (cc.security_ray_is_reached(point_from_ptr3(pts + 3*neigs[DEFAULT_NB_PLANES * seed + v]))) {
+               IF_CPU(gs.nb_clips_before_radius[v]++);
+               break;
            }
-           //IF_CPU(decompose_tet.clear(););
+#endif
            if (gpu_stat[seed] != success) return;
        }
        IF_CPU(gs.nbv[cc.nb_v]++;);
        IF_CPU(gs.nbt[cc.nb_t]++;);
-           // check security ray
-       {
-           // finds furthest voro vertex distance
-           float v_dist = 0;
-           FOR(i, cc.nb_t) {
-               float4 pc = cc.compute_triangle_point(tr(i));
-               pc = normalize4(pc);
-               float4 diff = minus4(pc, cc.voro_seed);
-               float d2 = dot3(diff, diff);
-               v_dist = max(d2, v_dist);
-           }
-           //find furthest neigborgs distance
-           float neig_dist = 0;
-           FOR(v, DEFAULT_NB_PLANES) {
-               unsigned int vid = neigs[DEFAULT_NB_PLANES * seed + v];
-
-               if (vid >= nbpts) continue;
-                float4 pc = point_from_ptr3(pts + 3 * vid);
-               float4 diff = minus4(pc, cc.voro_seed);
-               float d2 = dot3(diff, diff);
-               neig_dist = max(d2, neig_dist);
-           }
-           // reject cell without enough neighborgs
-           if (neig_dist < 4 * v_dist) {
-               gpu_stat[seed] = security_ray_not_reached;
-               return;
-           }
+       // check security ray
+       if (!cc.security_ray_is_reached(point_from_ptr3(pts + 3 * neigs[DEFAULT_NB_PLANES * (seed+1) -1]))) {
+           gpu_stat[seed] = security_ray_not_reached;
+           return;
        }
-      
+
        
        //if (gpu_stat[seed] != success ) return; // compute bary anyway
        
        export_bary_and_volume(cc, out_pts, seed);
-
-     
-
    }
 
 

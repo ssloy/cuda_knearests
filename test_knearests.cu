@@ -134,7 +134,7 @@ int main(int argc, char** argv) {
         std::cerr << argv[1] << ": could not load file" << std::endl;
         return 1;
     }
-    /*
+    
     pts.resize(60000);
     FOR(i, pts.size()) pts[i] =  1000.*float(rand()) / float(RAND_MAX);
     
@@ -173,8 +173,8 @@ int main(int argc, char** argv) {
    
 
 
-        //compute_voro_diagram_CPU(pts, stat, bary);        // show many stats and output voro decomposition
-        //return;
+        compute_voro_diagram_CPU(pts, stat, bary);        // show many stats and output voro decomposition
+        return;
 
 
         {// single GPU run
@@ -183,7 +183,7 @@ int main(int argc, char** argv) {
             int block_size = pow(2, iter);
             std::cerr << " block_size = " << block_size << std::endl;
             compute_voro_diagram_GPU(pts, stat, bary, block_size, 0);
-
+            return;
             // Lloyd
             drop_xyz_file(pts);
             FOR(i, 15) { // to recompu  te the knn
