@@ -4,8 +4,8 @@
 //#define MAX_CLIPS  45
 //#define MAX_T  50
 
-#define POINTS_PER_BLOCK 32
-#define DEFAULT_NB_PLANES 180
+#define POINTS_PER_BLOCK 64
+#define DEFAULT_NB_PLANES 40
 #define MAX_CLIPS  45
 #define MAX_T  60
 

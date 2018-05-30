@@ -63,11 +63,6 @@ bool load_file(const char* filename, std::vector<float>& xyz, bool normalize=tru
     assert(xyz.size() == npts*3);
     in.close();
 
-
-
-    normalize = false;
-
-
     if (normalize) { // normalize point cloud between [0,1000]^3
         float xmin,ymin,zmin,xmax,ymax,zmax;
         get_bbox(xyz, xmin, ymin, zmin, xmax, ymax, zmax);
@@ -139,6 +134,7 @@ int main(int argc, char** argv) {
         std::cerr << argv[1] << ": could not load file" << std::endl;
         return 1;
     }
+    /*
     pts.resize(60000);
     FOR(i, pts.size()) pts[i] =  1000.*float(rand()) / float(RAND_MAX);
     
@@ -186,7 +182,7 @@ int main(int argc, char** argv) {
             Stopwatch W("GPU run");
             int block_size = pow(2, iter);
             std::cerr << " block_size = " << block_size << std::endl;
-            compute_voro_diagram_GPU(pts, stat, bary, block_size, 0);return;
+            compute_voro_diagram_GPU(pts, stat, bary, block_size, 0);
 
             // Lloyd
             drop_xyz_file(pts);
