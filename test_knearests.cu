@@ -134,9 +134,10 @@ int main(int argc, char** argv) {
         std::cerr << argv[1] << ": could not load file" << std::endl;
         return 1;
     }
+
     
-    pts.resize(60000);
-    FOR(i, pts.size()) pts[i] =  1000.*float(rand()) / float(RAND_MAX);
+//  pts.resize(60000);
+//  FOR(i, pts.size()) pts[i] =  1000.*float(rand()) / float(RAND_MAX);
     
     //FOR(i, pts.size() ) {
     //    if (i % 3 != 0) continue;
@@ -173,8 +174,8 @@ int main(int argc, char** argv) {
    
 
 
-        compute_voro_diagram_CPU(pts, stat, bary);        // show many stats and output voro decomposition
-        return;
+//      compute_voro_diagram_CPU(pts, stat, bary);        // show many stats and output voro decomposition
+//      return;
 
 
         {// single GPU run

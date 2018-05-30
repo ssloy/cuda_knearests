@@ -60,23 +60,22 @@ __host__ __device__ float4 point_from_ptr3(float* f) {
     return make_float4(f[0], f[1], f[2], 1);
 }
 __host__ __device__ float4 minus4(float4 A, float4 B) {
-    return make_float4(A.x - B.x, A.y - B.y, A.z - B.z, A.w - B.w);
+    return make_float4(A.x-B.x, A.y-B.y, A.z-B.z, A.w-B.w);
 }
 __host__ __device__ float4 plus4(float4 A, float4 B) {
-    return make_float4(A.x + B.x, A.y + B.y, A.z + B.z, A.w + B.w);
+    return make_float4(A.x+B.x, A.y+B.y, A.z+B.z, A.w+B.w);
 }
 __host__ __device__ float dot4(float4 A, float4 B) {
-    return A.x * B.x + A.y * B.y + A.z * B.z + A.w * B.w;
+    return A.x*B.x + A.y*B.y + A.z*B.z + A.w*B.w;
 }
 __host__ __device__ float dot3(float4 A, float4 B) {
-    return A.x * B.x + A.y * B.y + A.z * B.z;
+    return A.x*B.x + A.y*B.y + A.z*B.z;
 }
+/*
 __host__ __device__ float4 normalize4(float4 A) {
     return make_float4(A.x / A.w, A.y / A.w, A.z / A.w, 1);
 }
-__host__ __device__ float norm23(float4 A) {
-    return dot3(A, A);
-}
+*/
 __host__ __device__ float4 mul3(float s, float4 A) {
     return make_float4(s*A.x, s*A.y, s*A.z, 1.);
 }
@@ -95,25 +94,30 @@ __host__ __device__ inline float det3x3(float a11, float a12, float a13, float a
     return a11*det2x2(a22, a23, a32, a33) - a21*det2x2(a12, a13, a32, a33) + a31*det2x2(a12, a13, a22, a23);
 }
 
-__host__ __device__ void get_tet_volume(float& volume, float4 A, float4 B, float4 C) {
-    volume = -det3x3(A.x, A.y, A.z, B.x, B.y, B.z, C.x, C.y, C.z)/6.;
+__host__ __device__ inline float get_tet_volume(float4 A, float4 B, float4 C) {
+    return -det3x3(A.x, A.y, A.z, B.x, B.y, B.z, C.x, C.y, C.z)/6.;
 }
 __host__ __device__ void get_tet_volume_and_barycenter(float4& bary, float& volume, float4 A, float4 B, float4 C, float4 D) {
-    get_tet_volume(volume, minus4(A, D), minus4(B, D), minus4(C, D));
-    bary = make_float4(.25*(A.x + B.x + C.x + D.x), .25*(A.y + B.y + C.y + D.y), .25*(A.z + B.z + C.z + D.z),1);
+    volume = get_tet_volume(minus4(A, D), minus4(B, D), minus4(C, D));
+    bary = make_float4(.25*(A.x+B.x+C.x+D.x), .25*(A.y+B.y+C.y+D.y), .25*(A.z+B.z+C.z+D.z), 1);
 }
 
+/*
+__host__ __device__ float norm23(float4 A) {
+    return dot3(A, A);
+}
+*/
 __host__ __device__ float4 project_on_plane(float4 P, float4 plane) {
-    float4 n = make_float4(plane.x, plane.y, plane.z,0);
-    float lambda;
-    lambda = (dot3(n, P) + plane.w) / norm23(n);
+    float4 n = make_float4(plane.x, plane.y, plane.z, 0);
+    float lambda = (dot4(n, P) + plane.w)/dot4(n, n);
+//    lambda = (dot3(n, P) + plane.w) / norm23(n);
     return plus4(P, mul3(-lambda, n));
 }
 
 
 
 
-template <typename T>__host__ __device__ void inline swap_on_device(T& a, T& b) { T c(a); a = b; b = c; }
+template <typename T>__host__ __device__ void inline swap(T& a, T& b) { T c(a); a = b; b = c; }
 
 void drop_xyz_file(std::vector<float>& pts, const char* filename = NULL) {
     if (filename == NULL) {
@@ -209,16 +213,16 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
         public:
            __host__ __device__ ConvexCell(int p_seed, float* p_pts, Status* p_status);
            __host__ __device__ void clip_by_plane(int vid);
-           __host__ __device__ float4 compute_triangle_point(uchar3 t) const;
+           __host__ __device__ float4 compute_triangle_point(uchar3 t, bool persp_divide=true) const;
            __host__ __device__ inline  uchar& ith_plane(uchar t, int i);
            __host__ __device__ int new_point(int vid);
            __host__ __device__ void new_triangle(uchar i, uchar j, uchar k);
            __host__ __device__ void compute_boundary();
-           __host__ __device__  bool security_ray_is_reached(float4 last_neig);
+           __host__ __device__ bool security_ray_is_reached(float4 last_neig);
 
             Status* status;
             uchar nb_t;
-            uchar nb_conflicts;
+            uchar nb_r;
             float* pts;
             int voro_id;
             float4 voro_seed;
@@ -232,16 +236,14 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
         float v_dist = 0;
         FOR(i, nb_t) {
             float4 pc = compute_triangle_point(tr(i));
-            pc = normalize4(pc);
             float4 diff = minus4(pc, voro_seed);
-            float d2 = dot3(diff, diff);
+            float d2 = dot3(diff, diff); // TODO safe to put dot4 here, diff.w = 0
             v_dist = max(d2, v_dist);
         }
-        //compare to new neigborgs distance2
-        float4 pc = last_neig;
-        float4 diff = minus4(pc, voro_seed);
+        //compare to new neighbors distance2
+        float4 diff = minus4(last_neig, voro_seed); // TODO it really should take index of the neighbor instead of the float4, then would be safe to put dot4
         float d2 = dot3(diff, diff);
-        return (d2> 4 * v_dist);
+        return (d2 > 4*v_dist);
     }
 
 
@@ -262,7 +264,7 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
         first_boundary_ = END_OF_LIST;
         FOR(i, MAX_CLIPS) boundary_next(i) = END_OF_LIST;
         voro_id = p_seed;
-        voro_seed = make_float4(pts[3 * voro_id], pts[3 * voro_id + 1], pts[3 * voro_id + 2],1);
+        voro_seed = make_float4(pts[3 * voro_id], pts[3 * voro_id + 1], pts[3 * voro_id + 2], 1);
         status = p_status;
         *status = success;
 
@@ -285,7 +287,7 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
         nb_t = 8;
     }
 
-   __host__ __device__ float4 ConvexCell::compute_triangle_point(uchar3 t) const {
+   __host__ __device__ float4 ConvexCell::compute_triangle_point(uchar3 t, bool persp_divide) const {
         float4 pi1 = clip(t.x);
         float4 pi2 = clip(t.y);
         float4 pi3 = clip(t.z);
@@ -294,6 +296,7 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
         result.y = -det3x3(pi1.x, pi1.w, pi1.z, pi2.x, pi2.w, pi2.z, pi3.x, pi3.w, pi3.z);
         result.z = -det3x3(pi1.x, pi1.y, pi1.w, pi2.x, pi2.y, pi2.w, pi3.x, pi3.y, pi3.w);
         result.w =  det3x3(pi1.x, pi1.y, pi1.z, pi2.x, pi2.y, pi2.z, pi3.x, pi3.y, pi3.z);
+        if (persp_divide) return make_float4(result.x / result.w, result.y / result.w, result.z / result.w, 1);
         return result;
     }
 
@@ -307,16 +310,15 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
     }
 
    __host__ __device__ int ConvexCell::new_point(int vid) {
-        if (nb_v == MAX_CLIPS) { 
+        if (nb_v >= MAX_CLIPS) { 
             *status = vertex_overflow; 
             return -1; 
         }
 
-
         float4 B = point_from_ptr3(pts + 3 * vid);
         float4 dir = minus4(voro_seed, B);
         float4 ave2 = plus4(voro_seed, B);
-        float dot = dot3(ave2,dir);
+        float dot = dot3(ave2,dir); // TODO safe to put dot4 here, dir.w = 0
         clip(nb_v) = make_float4(dir.x, dir.y, dir.z, -dot / 2.f);
         nb_v++;
         return nb_v - 1;
@@ -335,7 +337,7 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
 
         int nb_iter = 0;
         uchar t = nb_t;
-        while (nb_conflicts>0) {
+        while (nb_r>0) {
             if (nb_iter++ >100) { 
                * status = weird_cavity; 
                 return; 
@@ -360,7 +362,7 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
 
             if (!new_border_is_simple) {
                 t++;
-                if (t == nb_t + nb_conflicts) t = nb_t;
+                if (t == nb_t + nb_r) t = nb_t;
                 continue;
             }
 
@@ -374,38 +376,34 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
             }
 
             //remove triangle from R, and restart iterating on R
-            swap_on_device(tr(t), tr(nb_t+nb_conflicts-1));
+            swap(tr(t), tr(nb_t+nb_r-1));
             t = nb_t;
-            nb_conflicts--;
+            nb_r--;
         }
 
         IF_CPU(gs.add_compute_boundary_iter(nb_iter);)
     }
 
    __host__ __device__ void  ConvexCell::clip_by_plane(int vid) {
-        int cur_v= new_point(vid);
+        int cur_v = new_point(vid); // add new plane equation
         if (*status == vertex_overflow) return;
         float4 eqn = clip(cur_v);
-        nb_conflicts = 0;
+        nb_r = 0;
 
-
-        // Step 1: find conflicts
         int i = 0;
-        while (i < nb_t) {
-            float4 pc = compute_triangle_point(tr(i));
-            // check conflict
-            if (eqn.x*pc.x + eqn.y*pc.y + eqn.z*pc.z + eqn.w*pc.w >0){// tr conflict
-                swap_on_device(tr(i), tr(nb_t-1));
+        while (i < nb_t) { // for all vertices of the cell
+            float4 pc = compute_triangle_point(tr(i), false); // get the vertex
+            if (dot4(eqn, pc)>0) { // is it clipped? then remove from T and place to R
                 nb_t--;
-                nb_conflicts++;
+                swap(tr(i), tr(nb_t));
+                nb_r++;
             }
             else i++;
         }
 
-        IF_CPU(gs.add_clip(nb_conflicts);)
+        IF_CPU(gs.add_clip(nb_r);)
 
-        // do not waste memory with clipping plane that did not intersect the cell
-        if (nb_conflicts == 0) {
+        if (nb_r == 0) { // if no clips, then remove the plane equation
             nb_v--;
             return;
         }
@@ -431,10 +429,9 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
 
    __host__ __device__ void get_tet_decomposition_of_vertex(ConvexCell& cc, int t, float4* P) {
        float4 C = cc.voro_seed;
-       float4 A4 = cc.compute_triangle_point(tr(t));
-       float4 A = normalize4(A4);
-       FOR(i,3)        P[2*i] = project_on_plane(C, clip(cc.ith_plane(t,i)));
-       FOR(i, 3)        P[2 * i+1] = project_on_plane(A, plane_from_point_and_normal(C, cross3(minus4(P[2*i], C), minus4(P[(2*(i+1))%6], C))));
+       float4 A = cc.compute_triangle_point(tr(t));
+       FOR(i,3)  P[2*i  ] = project_on_plane(C, clip(cc.ith_plane(t,i)));
+       FOR(i, 3) P[2*i+1] = project_on_plane(A, plane_from_point_and_normal(C, cross3(minus4(P[2*i], C), minus4(P[(2*(i+1))%6], C))));
    }
 
    std::vector<float4> decompose_tet;
@@ -448,8 +445,7 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
        float4 C = cc.voro_seed;
 
        FOR(t, cc.nb_t) {
-           float4 A4 = cc.compute_triangle_point(tr(t));
-           float4 A = normalize4(A4);
+           float4 A = cc.compute_triangle_point(tr(t));
 
            get_tet_decomposition_of_vertex(cc, t, P);
            FOR(i, 6) {
@@ -468,9 +464,9 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
 #endif
 //#endif
        }
-       out_pts[3 * seed] = bary_sum.x / cell_vol;
-       out_pts[3 * seed + 1] = bary_sum.y / cell_vol;
-       out_pts[3 * seed + 2] = bary_sum.z / cell_vol;
+       out_pts[3*seed    ] = bary_sum.x / cell_vol;
+       out_pts[3*seed + 1] = bary_sum.y / cell_vol;
+       out_pts[3*seed + 2] = bary_sum.z / cell_vol;
        return;
    }
 
