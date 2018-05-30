@@ -218,7 +218,7 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
            __host__ __device__ int new_point(int vid);
            __host__ __device__ void new_triangle(uchar i, uchar j, uchar k);
            __host__ __device__ void compute_boundary();
-           __host__ __device__ bool security_ray_is_reached(float4 last_neig);
+           __host__ __device__ bool is_security_radius_reached(float4 last_neig);
 
             Status* status;
             uchar nb_t;
@@ -231,7 +231,7 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
     };
 
 
-    __host__ __device__  bool ConvexCell::security_ray_is_reached(float4 last_neig) {
+    __host__ __device__  bool ConvexCell::is_security_radius_reached(float4 last_neig) {
         // finds furthest voro vertex distance2
         float v_dist = 0;
         FOR(i, nb_t) {
@@ -498,7 +498,7 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
        FOR(v, DEFAULT_NB_PLANES) {
            cc.clip_by_plane(neigs[DEFAULT_NB_PLANES * seed + v]);
 #ifndef __CUDA_ARCH__
-           if (cc.security_ray_is_reached(point_from_ptr3(pts + 3*neigs[DEFAULT_NB_PLANES * seed + v]))) {
+           if (cc.is_security_radius_reached(point_from_ptr3(pts + 3*neigs[DEFAULT_NB_PLANES * seed + v]))) {
                IF_CPU(gs.nb_clips_before_radius[v]++);
                break;
            }
@@ -508,7 +508,7 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
        IF_CPU(gs.nbv[cc.nb_v]++;);
        IF_CPU(gs.nbt[cc.nb_t]++;);
        // check security ray
-       if (!cc.security_ray_is_reached(point_from_ptr3(pts + 3 * neigs[DEFAULT_NB_PLANES * (seed+1) -1]))) {
+       if (!cc.is_security_radius_reached(point_from_ptr3(pts + 3 * neigs[DEFAULT_NB_PLANES * (seed+1) -1]))) {
            gpu_stat[seed] = security_ray_not_reached;
            return;
        }
