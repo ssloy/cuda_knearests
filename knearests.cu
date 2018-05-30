@@ -12,32 +12,26 @@
 #include <random>
 #include <float.h>
 
-#include "params.h"
 #include "knearests.h"
-
-// ------------------------------------------------------------
-
+#include "params.h"
 
 // ------------------------------------------------------------
 
 // it is supposed that all points fit in range [0,1000]^3
-__device__ int cellFromPoint(int xdim, int ydim, int zdim, float x, float y, float z) {
-    int   i = (int)floor(x * (float)xdim / 1000.f);
-    int   j = (int)floor(y * (float)ydim / 1000.f);
-    int   k = (int)floor(z * (float)zdim / 1000.f);
+__device__ int cellFromPoint(int xdim, int ydim, int zdim, float3 p) {
+    int   i = (int)floor(p.x * (float)xdim / 1000.f);
+    int   j = (int)floor(p.y * (float)ydim / 1000.f);
+    int   k = (int)floor(p.z * (float)zdim / 1000.f);
     i = max(0, min(i, xdim - 1));
     j = max(0, min(j, ydim - 1));
     k = max(0, min(k, zdim - 1));
     return i + j*xdim + k*xdim*ydim;
 }
 
-__global__ void count(const float *points, int numPoints, int xdim, int ydim, int zdim, int *counters) {
+__global__ void count(const float3 *points, int numPoints, int xdim, int ydim, int zdim, int *counters) {
     int id = blockDim.x * blockIdx.x + threadIdx.x;
     if (id < numPoints) {
-        float x = points[id*3 + 0];
-        float y = points[id*3 + 1];
-        float z = points[id*3 + 2];
-        int cell = cellFromPoint(xdim, ydim, zdim, x, y, z);
+        int cell = cellFromPoint(xdim, ydim, zdim, points[id]);
         atomicAdd(counters + cell, 1);
     }
 }
@@ -53,18 +47,14 @@ __global__ void reserve(int xdim, int ydim, int zdim, const int *counters, int *
 }
 
 // it supposes that counters buffer is set to zero
-__global__ void store(const float *points, int numPoints, int xdim, int ydim, int zdim, const int *ptrs, int *counters, int num_stored, float *stored_points, unsigned int *permutation) {
+__global__ void store(const float3 *points, int numPoints, int xdim, int ydim, int zdim, const int *ptrs, int *counters, int num_stored, float3 *stored_points, unsigned int *permutation) {
     int id = blockDim.x * blockIdx.x + threadIdx.x;
     if (id < numPoints) {
-        float x = points[id*3+0];
-        float y = points[id*3+1];
-        float z = points[id*3+2];
-        int cell = cellFromPoint(xdim, ydim, zdim, x, y, z);
+        float3 p = points[id];
+        int cell = cellFromPoint(xdim, ydim, zdim, p);
         int pos = ptrs[cell] + atomicAdd(counters + cell, 1);
         permutation[pos] = id;
-        stored_points[pos*3+0] = x;
-        stored_points[pos*3+1] = y;
-        stored_points[pos*3+2] = z;
+        stored_points[pos] = p;
     }
 }
 
@@ -72,7 +62,34 @@ template <typename T> __device__ void inline swap_on_device(T& a, T& b) {
     T c(a); a=b; b=c;
 }
 
-__global__ void knearest(int xdim, int ydim, int zdim, int num_stored, const int *ptrs, const int *counters, const float *stored_points, int num_cell_offsets, const int *cell_offsets, const float *cell_offset_distances, unsigned int *g_knearests) {
+__device__ void heapify(unsigned int *keys, float *vals, int node, int size) {
+    int j = node;
+    while (true) { 
+        int left  = 2*j+1;
+        int right = 2*j+2;
+        int largest = j;
+        if ( left<size && vals[ left]>vals[largest]) {
+            largest = left;
+        }
+        if (right<size && vals[right]>vals[largest]) {
+            largest = right;
+        }
+        if (largest==j) return;
+        swap_on_device(vals[j], vals[largest]);
+        swap_on_device(keys[j], keys[largest]);
+        j = largest;
+    }
+}
+
+__device__ void heapsort(unsigned int *keys, float *vals, int size) {
+    while (size) {
+        swap_on_device(vals[0], vals[size-1]);
+        swap_on_device(keys[0], keys[size-1]);
+        heapify(keys, vals, 0, --size);
+    }
+}
+
+__global__ void knearest(int xdim, int ydim, int zdim, int num_stored, const int *ptrs, const int *counters, const float3 *stored_points, int num_cell_offsets, const int *cell_offsets, const float *cell_offset_distances, unsigned int *g_knearests) {
     // each thread updates its k-nearests
     __shared__ unsigned int knearests      [DEFAULT_NB_PLANES*POINTS_PER_BLOCK];
     __shared__ float        knearests_dists[DEFAULT_NB_PLANES*POINTS_PER_BLOCK];
@@ -81,11 +98,9 @@ __global__ void knearest(int xdim, int ydim, int zdim, int num_stored, const int
     if (point_in >= num_stored) return;
 
     // point considered by this thread
-    float x = stored_points[point_in*3 + 0];
-    float y = stored_points[point_in*3 + 1];
-    float z = stored_points[point_in*3 + 2];
+    float3 p = stored_points[point_in];
 
-    int cell_in = cellFromPoint(xdim, ydim, zdim, x, y, z);
+    int cell_in = cellFromPoint(xdim, ydim, zdim, p);
     int offs = threadIdx.x*DEFAULT_NB_PLANES;
 
     for (int i = 0; i < DEFAULT_NB_PLANES; i++) {
@@ -103,47 +118,32 @@ __global__ void knearest(int xdim, int ydim, int zdim, int num_stored, const int
             int num = counters[cell];
             for (int ptr=cell_base; ptr<cell_base+num; ptr++) {
                 if (ptr==point_in) continue; // exclude the point itself from its neighbors
-                float x_cmp = stored_points[ptr*3 + 0];
-                float y_cmp = stored_points[ptr*3 + 1];
-                float z_cmp = stored_points[ptr*3 + 2];
-
-                float d = (x_cmp - x)*(x_cmp - x) + (y_cmp - y)*(y_cmp - y) + (z_cmp - z)*(z_cmp - z);
+                float3 p_cmp = stored_points[ptr];
+                float d = (p_cmp.x-p.x)*(p_cmp.x-p.x) + (p_cmp.y-p.y)*(p_cmp.y-p.y) + (p_cmp.z-p.z)*(p_cmp.z-p.z);
 
                 if (d < knearests_dists[offs]) {
                     // replace current max
                     knearests[offs] = ptr;
                     knearests_dists[offs] = d;
 
-                    int j = 0; // max-heapify
-                    while (true) { 
-                        int left  = 2*j+1;
-                        int right = 2*j+2;
-                        int largest = j;
-                        if (left<DEFAULT_NB_PLANES && knearests_dists[offs+left]>knearests_dists[offs+largest]) {
-                            largest = left;
-                        }
-                        if (right<DEFAULT_NB_PLANES && knearests_dists[offs+right]>knearests_dists[offs+largest]) {
-                            largest = right;
-                        }
-                        if (largest==j) break;
-                        swap_on_device(knearests_dists[offs+j], knearests_dists[offs+largest]);
-                        swap_on_device(knearests      [offs+j], knearests      [offs+largest]);
-                        j = largest;
-                    }
+                    heapify(knearests+offs, knearests_dists+offs, 0, DEFAULT_NB_PLANES);
                 }
             } // pts inside the cell
         } // valid cell id
     } // cell offsets
 
+    heapsort(knearests+offs, knearests_dists+offs, DEFAULT_NB_PLANES);
+
     // store result
     for (int i = 0; i < DEFAULT_NB_PLANES; i++) {
-        g_knearests[point_in*DEFAULT_NB_PLANES + i] = knearests[offs+DEFAULT_NB_PLANES-1-i];
+        g_knearests[point_in*DEFAULT_NB_PLANES + i] = knearests[offs + i];
+        //g_knearests[point_in*DEFAULT_NB_PLANES + i] = knearests[offs + DEFAULT_NB_PLANES-1 -i];
     }
 }
 
 // ------------------------------------------------------------
 
-void kn_firstbuild(kn_problem *kn, float *d_points, int numpoints) {
+void kn_firstbuild(kn_problem *kn, float3 *d_points, int numpoints) {
     cudaError_t err = cudaSuccess;
     cudaEvent_t start, stop;
     cudaEventCreate(&start);
@@ -224,7 +224,7 @@ void gpuMallocNMemset(void **ptr, int value, size_t size) {
 
 // ------------------------------------------------------------
 
-kn_problem *kn_prepare(float *points, int numpoints) {
+kn_problem *kn_prepare(float3 *points, int numpoints) {
     kn_problem *kn = (kn_problem*)malloc(sizeof(kn_problem));
     kn->K = DEFAULT_NB_PLANES;
     kn->allocated_points = numpoints;
@@ -290,8 +290,8 @@ kn_problem *kn_prepare(float *points, int numpoints) {
     gpuMallocNCopy((void **)&kn->d_cell_offset_dists, cell_offset_dists, bufsize);
     free(cell_offset_dists);
 
-    float *d_points = NULL;
-    bufsize = numpoints*3*sizeof(float); // allocate input points
+    float3 *d_points = NULL;
+    bufsize = numpoints*sizeof(float3); // allocate input points
     memory_used += bufsize;
     gpuMallocNCopy((void **)&d_points, points, bufsize); 
 
@@ -307,7 +307,7 @@ kn_problem *kn_prepare(float *points, int numpoints) {
     memory_used += bufsize;
     gpuMallocNMemset((void **)&kn->d_globcounter, 0x00, bufsize); 
 
-    bufsize = kn->allocated_points*sizeof(float)*3; // allocate stored points
+    bufsize = kn->allocated_points*sizeof(float3); // allocate stored points
     memory_used += bufsize;
     gpuMallocNMemset((void **)&kn->d_stored_points, 0x00, bufsize); 
 
@@ -344,7 +344,7 @@ void kn_solve(kn_problem *kn) {
 
     knearest << <blocksPerGrid, threadsPerBlock >> >(
             kn->dimx, kn->dimy, kn->dimz, kn->allocated_points,
-            kn->d_ptrs, kn->d_counters, kn->d_stored_points,
+            kn->d_ptrs, kn->d_counters, (float3 *)kn->d_stored_points,
             kn->num_cell_offsets, kn->d_cell_offsets, kn->d_cell_offset_dists,
             kn->d_knearests);
 
@@ -376,9 +376,9 @@ void kn_free(kn_problem **kn) {
     *kn = NULL;
 }
 
-float *kn_get_points(kn_problem *kn) {
-    float *stored_points = (float*)malloc(kn->allocated_points * sizeof(float) * 3);
-    cudaError_t err = cudaMemcpy(stored_points, kn->d_stored_points, kn->allocated_points * sizeof(float) * 3, cudaMemcpyDeviceToHost);
+float3 *kn_get_points(kn_problem *kn) {
+    float3 *stored_points = (float3*)malloc(kn->allocated_points * sizeof(float3));
+    cudaError_t err = cudaMemcpy(stored_points, kn->d_stored_points, kn->allocated_points * sizeof(float3), cudaMemcpyDeviceToHost);
     if (err != cudaSuccess) {
         std::cerr << "[kn_print_stats] Failed to copy from device to host (error code " << cudaGetErrorString(err) << ")!" << std::endl;
         exit(EXIT_FAILURE);

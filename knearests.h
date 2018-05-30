@@ -13,18 +13,18 @@ typedef struct {
     int *d_counters;             // counters per cell,   dimx*dimy*dimz
     int *d_ptrs;                 // cell start pointers, dimx*dimy*dimz
     int *d_globcounter;          // global allocation counter, 1
-    float *d_stored_points;      // input points sorted, numpoints + 1
+    float3 *d_stored_points;      // input points sorted, numpoints + 1
     unsigned int *d_knearests;   // knn, allocated_points * KN
 } kn_problem;
 
 // ------------------------------------------------------------
 
 
-kn_problem   *kn_prepare(float *points, int numpoints);
+kn_problem   *kn_prepare(float3 *points, int numpoints);
 void          kn_solve(kn_problem *kn);
 void          kn_free(kn_problem **kn);
 
-float        *kn_get_points(kn_problem *kn);
+float3        *kn_get_points(kn_problem *kn);
 unsigned int *kn_get_knearests(kn_problem *kn);
 unsigned int *kn_get_permutation(kn_problem *kn);
 

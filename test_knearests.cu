@@ -66,7 +66,6 @@ bool load_file(const char* filename, std::vector<float>& xyz, bool normalize=tru
 
 
     normalize = false;
-    IF_NORMALIZE_PTS(normalize = true;)
 
 
     if (normalize) { // normalize point cloud between [0,1000]^3
@@ -86,14 +85,7 @@ bool load_file(const char* filename, std::vector<float>& xyz, bool normalize=tru
     return true;
 }
 
-void export_tet_mesh(float* pts, int nb_pts, int* tets, int nb_tets){
-    Stopwatch W("output out.tet");
-    std::ofstream out("C:\\DATA\\out.tet");
-    out << nb_pts << " vertices" << std::endl;
-    out << nb_tets << " tets" << std::endl;
-    FOR(v, nb_pts)   out << pts[3 * v] << " " << pts[3 * v + 1] << " " << pts[3 * v + 2] << std::endl;
-    FOR(j, nb_tets)  out << "4 " << tets[4 * j] << " " << tets[4 * j + 1] << " " << tets[4 * j + 2] << " " << tets[4 * j + 3] << " \n";
-}
+
 
 void printDevProp() {
     int devCount; // Number of CUDA devices
@@ -130,38 +122,6 @@ void printDevProp() {
 }
 
 
-void drop_xyz_file(std::vector<float>& pts) {
-    std::fstream file;
-    static int fileid = 0;
-    char filename[1024];
-    sprintf(filename, "C:\\DATA\\dr_%d_.xyz", fileid);
-    fileid++;
-    file.open(filename, std::ios_base::out);
-    file << pts.size() / 3 << std::endl;
-    FOR(i, pts.size() / 3) file << pts[3 * i] << "  " << pts[3 * i + 1] << "  " << pts[3 * i + 2] << " \n";
-    file.close();
-}
-void drop_xyz_file(std::vector<float>& pts, std::vector<bool>& heavy) {
-    std::fstream file;
-    static int fileid = -1;
-    fileid++;
-    char filename[1024];
-
-    sprintf(filename, "C:\\DATA\\o_%03d_heavy.xyz", fileid);
-    file.open(filename, std::ios_base::out);
-    int nbheavy = 0;
-    FOR(i, heavy.size()) if (heavy[i]) nbheavy++;
-    file << nbheavy << std::endl;
-    FOR(i, pts.size() / 3) if (heavy[i]) file << pts[3 * i] << "  " << pts[3 * i + 1] << "  " << pts[3 * i + 2] << " \n";
-    file.close();
-  //  return;
-    sprintf(filename, "C:\\DATA\\o_%03d_light.xyz", fileid);
-    file.open(filename, std::ios_base::out);
-    file << heavy.size() - nbheavy << std::endl;
-    FOR(i, pts.size() / 3) if (!heavy[i]) file << pts[3 * i] << "  " << pts[3 * i + 1] << "  " << pts[3 * i + 2] << " \n";
-    file.close();
-  
-}
 
 
 
@@ -179,8 +139,19 @@ int main(int argc, char** argv) {
         std::cerr << argv[1] << ": could not load file" << std::endl;
         return 1;
     }
-    //pts.resize(9000);
-    //FOR(i, pts.size()) pts[i] =  1000.*double(rand()) / RAND_MAX;
+    pts.resize(60000);
+    FOR(i, pts.size()) pts[i] =  1000.*float(rand()) / float(RAND_MAX);
+    
+    //FOR(i, pts.size() ) {
+    //    if (i % 3 != 0) continue;
+    //    float x = pts[ i] / 1000.;
+    //    pts[i] = 1000.*x*x; continue;
+    //    x = -1 + 2.*x;
+    //    x = 5.*pow(x, 3.) - 3.*pow(x, 5.) +2*x;
+    //    //pts[3 * i] = 1000.*pow(pts[3 * i] / 1000., 2);
+    //    pts[i] = 1000.*(x -4.)/8.;
+    //}
+
 
     /*
     int n=216;
@@ -201,115 +172,33 @@ int main(int argc, char** argv) {
 */
 
     int nb_pts = pts.size()/3;
-
-
-    std::vector<int> tets(0);
-    IF_OUTPUT_TET(tets.resize(nb_pts * 4 * 50);)
-    int nb_tets = 0;
-
-    std::vector<float> out_pts(0);
-    IF_OUTPUT_P2BARY(out_pts.resize(pts.size(), 0);)
-
-        std::vector<Status> stat(nb_pts);
+    std::vector<float> bary(pts.size(), 0);
+    std::vector<Status> stat(nb_pts);
    
-#if STAT_MODE
-        {// CPU test /debug/stat
-            Stopwatch W("CPU run");
-            compute_voro_diagram_CPU(pts, tets, nb_tets, stat, out_pts,NULL);
-            IF_OUTPUT_TET(export_tet_mesh(pts.data(), nb_pts, tets.data(), nb_tets);)
 
-        }
-        return;
-#endif
 
-#if LOG_GPU_SPEED
+        //compute_voro_diagram_CPU(pts, stat, bary);        // show many stats and output voro decomposition
+        //return;
+
+
         {// single GPU run
             int iter = 5; 
             Stopwatch W("GPU run");
             int block_size = pow(2, iter);
             std::cerr << " block_size = " << block_size << std::endl;
-            compute_voro_diagram_GPU(pts, tets, nb_tets, stat, out_pts,NULL, block_size);
-        }
+            compute_voro_diagram_GPU(pts, stat, bary, block_size, 0);return;
+
+            // Lloyd
+            drop_xyz_file(pts);
+            FOR(i, 15) { // to recompu  te the knn
+                compute_voro_diagram_GPU(pts, stat, bary, block_size, 3);
+                drop_xyz_file(pts);
+            }
+    }
         return;
-#endif
-        
-#if LOYD_MODE
-        {
-            Stopwatch W("Test Loyd");
-            FOR(it, 50) {
-                compute_voro_diagram_GPU(pts, tets, nb_tets, stat, out_pts, NULL, 32);
-               // FOR(i, out_pts.size()) out_pts[i] /= 10.;
-                FOR(i, pts.size()) if (pts[i]+out_pts[i]<1000 && pts[i]+out_pts[i]>0 ) pts[i] = pts[i]+out_pts[i];
-                if ((it%5)==0 )drop_xyz_file(pts);
-            }
-        }
-        return;
-#endif
 
-#if SIMU_MODE
-        {
-            Stopwatch W("Fluids");
-            unsigned int *permutation;
-            std::vector<bool> heavy(nb_pts);
-            std::vector<float> indir_buffer(3*nb_pts);
-            //FOR(i, nb_pts) heavy[i] = (pts[3 * i] > 500);
-            //FOR(i, nb_pts) heavy[i] = (pts[3 * i + 2] > 600 + 200.*cos(6.28*pts[3 * i + 1] / 1000.) + 200 * cos(6.28*pts[3 * i + 0] / 1000.));
-            FOR(i, nb_pts) heavy[i] = (pts[3 * i + 2] > 600 - 200.*cos(6.28*pts[3 * i + 1] / 1000.) * cos(6.28*pts[3 * i + 0] / 1000.));
-           // FOR(i, nb_pts) heavy[i] = (pts[3 * i + 2] > 600 + 300.*cos(6.28*pts[3 * i + 1] / 1000.) );
-            //FOR(i, nb_pts) heavy[i] = (std::abs(pts[3 * i + 0] - 500)<200 && std::abs(pts[3 * i + 1] - 500)<200 && std::abs(pts[3 * i + 2] - 500)<200);
-
-            int inf = 0; int sup = nb_pts - 1;
-            while (inf < sup) {
-                if (!heavy[inf] && heavy[sup]) {
-                    FOR(d, 3) std::swap(pts[3 * inf + d], pts[3 * sup + d]);
-                    heavy[inf] = true;
-                    heavy[sup] = false;
-                }
-                if (heavy[inf]) inf++;
-                if (!heavy[sup]) sup--;
-            }
-            std::cerr << "2*(nb heavy) " <<2* inf << "---> \n";
-
-
-            std::vector<float> speed(3 * nb_pts,0);
-
-            FOR(it, 1001) {
-                std::cerr << "iter " << it << "---> ";
-                if (it % 50 == 0)  
-                    drop_xyz_file(pts);
-
-                compute_voro_diagram_GPU(pts, tets, nb_tets, stat, out_pts, &permutation, 32);
-                //compute_voro_diagram_CPU(pts, tets, nb_tets, stat, out_pts, &permutation);
-
-                FOR(i, pts.size()) indir_buffer[3 * permutation[i / 3] + i % 3] = out_pts[i];
-                FOR(i, pts.size()) out_pts[i] = indir_buffer[i];
-
-                FOR(i, pts.size()) indir_buffer[3 * permutation[i / 3] + i % 3] = pts[i];
-                FOR(i, pts.size()) pts[i] = indir_buffer[i];
-
-                float dt = .1;
-                FOR(i, pts.size()) {
-                    float r = 50;
-                    //if (heavy[i / 3]) r = 10;
-                    
-                    r *= float(nb_pts)/3000.;
-                    r *= 25;
-
-                    float a = r * out_pts[i] ;
-                    //if (i % 3 == 2) a += -.01;
-
-                    speed[i] = speed[i] + dt * a;
-                    pts[i] = pts[i] + dt * speed[i];
-
-                    if (pts[i] < 0) { speed[i] = 0; pts[i] = .1; }
-                    if (pts[i] > 1000) { speed[i] = 0; pts[i] = 999.9; }
-                }
-
-                free(permutation);
-            }
-        }
-#endif
     
     return 0;
 }
 
+ 
