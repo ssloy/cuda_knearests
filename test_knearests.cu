@@ -6,38 +6,11 @@
 #include <cassert>
 #include <set>
 
+#include "params.h"
 #include "knearests.h"
 #include "kd_tree.h"
 
-#if defined(__linux__)
-#   include <sys/times.h>
-#endif
-
-class Stopwatch {
-    public:
-        Stopwatch(const char* taskname) :
-            taskname_(taskname), start_(now()) {
-                std::cout << taskname_ << "..." << std::endl;
-            }
-        ~Stopwatch() {
-            double elapsed = now() - start_;
-            std::cout << taskname_ << ": "
-                << elapsed << "s" << std::endl;
-        }
-        static double now() {
-#if defined(__linux__)
-            tms now_tms;
-            return double(times(&now_tms)) / 100.0;
-#elif defined(WIN32) || defined(_WIN64)
-            return double(GetTickCount()) / 1000.0;	    
-#else
-            return 0.0;
-#endif	    
-        }
-    private:
-        const char* taskname_;
-        double start_;
-};
+#include "stopwatch.h"
 
 void get_bbox(const std::vector<float>& xyz, float& xmin, float& ymin, float& zmin, float& xmax, float& ymax, float& zmax) {
     int nb_v = xyz.size()/3;
@@ -149,7 +122,6 @@ int main(int argc, char** argv) {
     }
     
     std::vector<float> points;
-    const int DEFAULT_NB_PLANES = 36; // touche pas à ça
     std::vector<int> neighbors;
 
     { // load point cloud file
@@ -163,9 +135,17 @@ int main(int argc, char** argv) {
         int nb_points = points.size()/3;
         Stopwatch W("knn gpu");
 
-        kn_problem *kn = kn_prepare((float3 *)points.data(), nb_points);
-        kn_solve(kn);
+        int *ptr = NULL;
+        cudaError_t err = cudaMalloc(&ptr, sizeof(int));
+        kn_problem *kn = NULL;
+        {
+            Stopwatch W("knn subgpu");
+            kn = kn_prepare((float3 *)points.data(), nb_points);
+            kn_solve(kn);
+        }
+        cudaFree(ptr);
         kn_print_stats(kn);
+
 
         unsigned int *knearests = kn_get_knearests(kn);
 
