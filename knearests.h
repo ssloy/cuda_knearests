@@ -8,6 +8,7 @@ typedef struct {
     int num_cell_offsets;
     int allocated_points;
     int *d_cell_offsets;         // cell offsets (sorted by rings), Nmax*Nmax*Nmax*Nmax (Nmax = 8)
+    float *d_cell_max;
     float *d_cell_offset_dists;
     unsigned int *d_permutation;
     int *d_counters;             // counters per cell,   dimx*dimy*dimz

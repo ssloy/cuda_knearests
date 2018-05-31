@@ -180,14 +180,14 @@ int main(int argc, char** argv) {
    
 
 
-    bool run_on_GPU = false;
+    bool run_on_GPU = true;
     {
         Stopwatch W(" Lloyd");
-        FOR(i, 100) { // to recompute the knn
+        FOR(i, 1) { // to recompute the knn
             std::cerr << "Lloyd #" << i << std::endl;
             compute_voro_diagram(pts, stat, bary, 1, run_on_GPU);
         }
-        if (run_on_GPU) drop_xyz_file(pts);
+//        if (run_on_GPU) drop_xyz_file(pts);
     }
 
     return 0;

@@ -1,6 +1,6 @@
 // default settings
 #define POINTS_PER_BLOCK 32
-#define DEFAULT_NB_PLANES 185
+#define DEFAULT_NB_PLANES 180
 #define MAX_CLIPS  45
 #define MAX_T  64
 

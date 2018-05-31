@@ -89,7 +89,7 @@ __device__ void heapsort(unsigned int *keys, float *vals, int size) {
     }
 }
 
-__global__ void knearest(int xdim, int ydim, int zdim, int num_stored, const int *ptrs, const int *counters, const float3 *stored_points, int num_cell_offsets, const int *cell_offsets, const float *cell_offset_distances, unsigned int *g_knearests) {
+__global__ void knearest(int xdim, int ydim, int zdim, int num_stored, const int *ptrs, const int *counters, const float3 *stored_points, int num_cell_offsets, const int *cell_offsets, const float *cell_offset_distances, unsigned int *g_knearests, float *d_cell_max) {
     // each thread updates its k-nearests
     __shared__ unsigned int knearests      [DEFAULT_NB_PLANES*POINTS_PER_BLOCK];
     __shared__ float        knearests_dists[DEFAULT_NB_PLANES*POINTS_PER_BLOCK];
@@ -108,8 +108,10 @@ __global__ void knearest(int xdim, int ydim, int zdim, int num_stored, const int
         knearests_dists[offs + i] = FLT_MAX;
     }
 
-    for (int o=0; o<num_cell_offsets; o++) {
+    int o = 0;
+    do {
         float min_dist = cell_offset_distances[o];
+        if (min_dist>d_cell_max[threadIdx.x]) d_cell_max[threadIdx.x] = min_dist;
         if (knearests_dists[offs] < min_dist) break;
 
         int cell = cell_in + cell_offsets[o];
@@ -130,7 +132,10 @@ __global__ void knearest(int xdim, int ydim, int zdim, int num_stored, const int
                 }
             } // pts inside the cell
         } // valid cell id
-    } // cell offsets
+    } while (o++<num_cell_offsets); // cell offsets
+    if (o==num_cell_offsets) {
+        d_cell_max[threadIdx.x] = FLT_MAX; // no guarantee to have found k nearest
+    }
 
     heapsort(knearests+offs, knearests_dists+offs, DEFAULT_NB_PLANES);
 
@@ -238,12 +243,12 @@ kn_problem *kn_prepare(float3 *points, int numpoints) {
     kn->d_stored_points     = NULL;
     kn->d_knearests         = NULL;
 
-    int sz = max(1,(int)round(pow(numpoints / 5.1f, 1.0f / 3.0)));
+    int sz = max(1,(int)round(pow(numpoints / 3.1f, 1.0f / 3.0)));
     kn->dimx = sz;
     kn->dimy = sz;
     kn->dimz = sz;
 
-    int Nmax = 8;
+    int Nmax = 16;
     if (sz < Nmax) {
         std::cerr << "Current implementation does not support low number of input points" << std::endl;
         exit(EXIT_FAILURE);
@@ -256,9 +261,9 @@ kn_problem *kn_prepare(float3 *points, int numpoints) {
     cell_offset_dists[0] = 0.0f;
     kn->num_cell_offsets = 1;
     for (int ring = 1; ring < Nmax; ring++) {
-        for (int k = -Nmax / 2; k <= Nmax / 2; k++) {
-            for (int j = -Nmax / 2; j <= Nmax / 2; j++) {
-                for (int i = -Nmax / 2; i <= Nmax / 2; i++) {
+        for (int k = -Nmax; k <= Nmax; k++) {
+            for (int j = -Nmax; j <= Nmax; j++) {
+                for (int i = -Nmax; i <= Nmax; i++) {
                     if (max(abs(i), max(abs(j), abs(k))) != ring) continue;
 
                     int id_offset = i + j*kn->dimx + k*kn->dimx*kn->dimy;
@@ -267,7 +272,7 @@ kn_problem *kn_prepare(float3 *points, int numpoints) {
                         exit(EXIT_FAILURE); 
                     }
                     cell_offsets[kn->num_cell_offsets] = id_offset;
-                    float d = (float)(ring - 1) / (float)max(kn->dimx, max(kn->dimy, kn->dimz));
+                    float d = 1000.*(float)(ring - 1) / (float)max(kn->dimx, max(kn->dimy, kn->dimz));
                     cell_offset_dists[kn->num_cell_offsets] = d*d; // squared
                     kn->num_cell_offsets++;
                     if (kn->num_cell_offsets >= alloc) {
@@ -277,6 +282,7 @@ kn_problem *kn_prepare(float3 *points, int numpoints) {
             }
         }
     }
+    std::cerr << "num_cell_offsets = " << kn->num_cell_offsets << std::endl;
 
     size_t memory_used = 0, bufsize = 0;
     
@@ -290,6 +296,12 @@ kn_problem *kn_prepare(float3 *points, int numpoints) {
     gpuMallocNCopy((void **)&kn->d_cell_offset_dists, cell_offset_dists, bufsize);
     free(cell_offset_dists);
 
+
+    bufsize = DEFAULT_NB_PLANES*sizeof(float);
+    memory_used += bufsize;
+    gpuMallocNMemset((void **)&kn->d_cell_max, 0x00, bufsize); 
+
+ 
     float3 *d_points = NULL;
     bufsize = numpoints*sizeof(float3); // allocate input points
     memory_used += bufsize;
@@ -346,7 +358,7 @@ void kn_solve(kn_problem *kn) {
             kn->dimx, kn->dimy, kn->dimz, kn->allocated_points,
             kn->d_ptrs, kn->d_counters, (float3 *)kn->d_stored_points,
             kn->num_cell_offsets, kn->d_cell_offsets, kn->d_cell_offset_dists,
-            kn->d_knearests);
+            kn->d_knearests, kn->d_cell_max);
 
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
@@ -359,6 +371,21 @@ void kn_solve(kn_problem *kn) {
     float milliseconds = 0;
     cudaEventElapsedTime(&milliseconds, start, stop);
     IF_VERBOSE(std::cerr << "kn_solve: " << milliseconds << " msec" << std::endl);
+
+    {
+        float *cell_max = (float*)malloc(DEFAULT_NB_PLANES * sizeof(float));
+        cudaError_t err = cudaMemcpy(cell_max, kn->d_cell_max, DEFAULT_NB_PLANES * sizeof(float), cudaMemcpyDeviceToHost);
+        if (err != cudaSuccess) {
+            std::cerr << "[kn_print_stats] Failed to copy from device to host (error code " << cudaGetErrorString(err) << ")!" << std::endl;
+            exit(EXIT_FAILURE);
+        }
+        float m = 0;
+        for (int i=0; i<DEFAULT_NB_PLANES; i++) {
+            if (cell_max[i]>m) m = cell_max[i];
+        }
+        std::cerr << "Max visited ring: " << (sqrtf(m)/1000.*kn->dimx+1) << " / " << (pow(kn->num_cell_offsets, 1./3.)-1)/2. << std::endl;
+    }
+
 }
 
 // ------------------------------------------------------------
@@ -366,6 +393,7 @@ void kn_solve(kn_problem *kn) {
 void kn_free(kn_problem **kn) {
     cudaFree((*kn)->d_cell_offsets);
     cudaFree((*kn)->d_cell_offset_dists);
+    cudaFree((*kn)->d_cell_max);
     cudaFree((*kn)->d_counters);
     cudaFree((*kn)->d_ptrs);
     cudaFree((*kn)->d_globcounter);
