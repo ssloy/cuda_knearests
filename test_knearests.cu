@@ -124,7 +124,7 @@ void printDevProp() {
 void compute_voro_diagram(std::vector<float>& pts, std::vector<Status> &stat, std::vector<float>& bary, int nb_Lloyd_iter,bool GPU=true) {
     if (GPU) compute_voro_diagram_GPU(pts, stat, bary, nb_Lloyd_iter);
     else compute_voro_diagram_CPU(pts, stat, bary, nb_Lloyd_iter);
-    }
+}
 
 
 int main(int argc, char** argv) {
@@ -180,10 +180,10 @@ int main(int argc, char** argv) {
    
 
 
-    bool run_on_GPU = true;
+    bool run_on_GPU = false;
     {
         Stopwatch W(" Lloyd");
-        FOR(i, 101) { // to recompute the knn
+        FOR(i, 100) { // to recompute the knn
             std::cerr << "Lloyd #" << i << std::endl;
             compute_voro_diagram(pts, stat, bary, 1, run_on_GPU);
         }

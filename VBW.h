@@ -474,7 +474,7 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
                bary_sum = plus4(bary_sum, mul3(tet_vol, tet_bary));
                cell_vol += tet_vol;
            }
-//#ifdef EXPORT_DECOMPOSITION
+#ifdef EXPORT_DECOMPOSITION
 #ifndef __CUDA_ARCH__
            FOR(i, 6) {
                decompose_tet.push_back(P[i]);
@@ -483,7 +483,7 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
                decompose_tet.push_back(A);
            }
 #endif
-//#endif
+#endif
        }
        out_pts[3*seed    ] = bary_sum.x / cell_vol;
        out_pts[3*seed + 1] = bary_sum.y / cell_vol;
@@ -701,6 +701,7 @@ void compute_voro_diagram_CPU(
 
     }
     callid++;
+    kn_free(&kn);
     free(nvpts);
     free(knn);
 }
