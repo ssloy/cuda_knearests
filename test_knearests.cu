@@ -63,6 +63,9 @@ bool load_file(const char* filename, std::vector<float>& xyz, bool normalize=tru
     assert(xyz.size() == npts*3);
     in.close();
 
+
+
+
     if (normalize) { // normalize point cloud between [0,1000]^3
         float xmin,ymin,zmin,xmax,ymax,zmax;
         get_bbox(xyz, xmin, ymin, zmin, xmax, ymax, zmax);
@@ -118,7 +121,10 @@ void printDevProp() {
 
 
 
-
+void compute_voro_diagram(std::vector<float>& pts, std::vector<Status> &stat, std::vector<float>& bary, int nb_Lloyd_iter,bool GPU=true) {
+    if (GPU) compute_voro_diagram_GPU(pts, stat, bary, nb_Lloyd_iter);
+    else compute_voro_diagram_CPU(pts, stat, bary, nb_Lloyd_iter);
+    }
 
 
 int main(int argc, char** argv) {
@@ -130,14 +136,14 @@ int main(int argc, char** argv) {
     
     std::vector<float> pts;
 
-    if (!load_file(argv[1], pts)) {
+    if (!load_file(argv[1], pts,false)) {
         std::cerr << argv[1] << ": could not load file" << std::endl;
         return 1;
     }
 
     
-//  pts.resize(60000);
-//  FOR(i, pts.size()) pts[i] =  1000.*float(rand()) / float(RAND_MAX);
+    //pts.resize(9000);
+    //FOR(i, pts.size()) pts[i] = 1.+998.*double(rand()) / double(RAND_MAX);
     
     //FOR(i, pts.size() ) {
     //    if (i % 3 != 0) continue;
@@ -174,23 +180,14 @@ int main(int argc, char** argv) {
    
 
 
-//      compute_voro_diagram_CPU(pts, stat, bary);        // show many stats and output voro decomposition
-//      return;
+    bool run_on_GPU = true;
 
-
-        {// single GPU run
-            int iter = 5; 
-            Stopwatch W("GPU run");
-            int block_size = pow(2, iter);
-            std::cerr << " block_size = " << block_size << std::endl;
-            compute_voro_diagram_GPU(pts, stat, bary, block_size, 0);
-            return;
-            // Lloyd
-            drop_xyz_file(pts);
-            FOR(i, 15) { // to recompu  te the knn
-                compute_voro_diagram_GPU(pts, stat, bary, block_size, 3);
-                drop_xyz_file(pts);
+        {
+            Stopwatch W(" Lloyd");
+            FOR(i, 51) { // to recompute the knn
+                compute_voro_diagram(pts, stat, bary, 1, run_on_GPU);
             }
+            if (run_on_GPU) drop_xyz_file(pts);
     }
         return;
 

@@ -172,7 +172,14 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
     struct GlobalStats {
         GlobalStats() { reset(); }
         void reset() {
+            nb_clips_before_radius.clear();
+            last_clip.clear(); 
+            nb_removed_voro_vertex_per_clip.clear(); 
+            compute_boundary_iter.clear(); 
+            nbv.clear();
+            nbt.clear(); 
             nb_clips_before_radius.resize(1000, 0);
+            last_clip.resize(1000, 0);
             nb_removed_voro_vertex_per_clip.resize(1000, 0);
             compute_boundary_iter.resize(1000, 0);
             nbv.resize(1000, 0);
@@ -180,27 +187,35 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
         }
         void start_cell() {
             cur_clip = 6;/* the bbox */
+            last_nz_clip = 6;
         }
         void add_clip(int nb_conflict_vertices) {
             cur_clip++;
+            if (nb_conflict_vertices!=0) last_nz_clip = cur_clip;
             nb_removed_voro_vertex_per_clip[nb_conflict_vertices]++;
         }
         void add_compute_boundary_iter(int nb_iter) { compute_boundary_iter[nb_iter]++; }
         void end_cell() {
-            nb_clips_before_radius[cur_clip]++;
+            nb_clips_before_radius[cur_clip]++; 
+            last_clip[last_nz_clip]++;
         }
         int cur_clip;
+        int last_nz_clip;
         std::vector<int> nbv;
         std::vector<int> nbt;
         std::vector<int> compute_boundary_iter;
+        std::vector<int> last_clip;
         std::vector<int> nb_clips_before_radius;
         std::vector<int> nb_removed_voro_vertex_per_clip;
         void show() {
-            export_histogram(nb_clips_before_radius, "nb_clips_before_radius", "#required clip planes", "proportion %");
-            export_histogram(nbv, "nbv", "#intersecting clip planes", "proportion %");
-            export_histogram(nbt, "nbt", "#Voronoi vertices", "proportion %");
-            export_histogram(nb_removed_voro_vertex_per_clip, "nb_removed_voro_vertex_per_clip", "#R", "proportion %");
-            export_histogram(compute_boundary_iter, "compute_boundary_iter", "#iter compute void boundary", "proportion %");
+            static int num = 0;
+            export_histogram(nb_clips_before_radius, std::string("nb_clips_before_radius") + std::to_string(num), "#required clip planes", "proportion %");
+            export_histogram(last_clip, std::string("last_usefull_clip") + std::to_string(num), "#last intersecting clip plane", "proportion %");
+            export_histogram(nbv, std::string("nbv") + std::to_string(num), "#intersecting clip planes", "proportion %");
+            export_histogram(nbt, std::string("nbt") + std::to_string(num), "#Voronoi vertices", "proportion %");
+            export_histogram(nb_removed_voro_vertex_per_clip, std::string("nb_removed_voro_vertex_per_clip") + std::to_string(num), "#R", "proportion %");
+            export_histogram(compute_boundary_iter, std::string("compute_boundary_iter") + std::to_string(num), "#iter compute void boundary", "proportion %");
+            num++;
         }
     } gs;
 
@@ -495,22 +510,26 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
        ConvexCell cc(seed, pts, &(gpu_stat[seed]));
 
        // clip by halfspaces
+       IF_CPU(gs.start_cell());
        FOR(v, DEFAULT_NB_PLANES) {
            cc.clip_by_plane(neigs[DEFAULT_NB_PLANES * seed + v]);
 #ifndef __CUDA_ARCH__
            if (cc.is_security_radius_reached(point_from_ptr3(pts + 3*neigs[DEFAULT_NB_PLANES * seed + v]))) {
-               IF_CPU(gs.nb_clips_before_radius[v]++);
                break;
            }
 #endif
-           if (gpu_stat[seed] != success) return;
+           if (gpu_stat[seed] != success) {
+               IF_CPU(gs.end_cell());
+               return;
+           }
        }
+       IF_CPU(gs.end_cell());
        IF_CPU(gs.nbv[cc.nb_v]++;);
        IF_CPU(gs.nbt[cc.nb_t]++;);
        // check security ray
        if (!cc.is_security_radius_reached(point_from_ptr3(pts + 3 * neigs[DEFAULT_NB_PLANES * (seed+1) -1]))) {
            gpu_stat[seed] = security_ray_not_reached;
-           return;
+         //  return;
        }
 
        
@@ -556,8 +575,16 @@ template <class T> struct GPUBuffer {
 
 
 
+void show_status_stats(std::vector<Status> &stat) {
+    IF_VERBOSE(std::cerr << " \n\n\n---------Summary of success/failure------------\n");
+    std::vector<int> nb_statuss(5, 0);
+    FOR(i, stat.size()) nb_statuss[stat[i]]++;
+    IF_VERBOSE(FOR(r, 5) std::cerr << " " << StatusStr[r] << "   " << nb_statuss[r] << "\n";)
+        std::cerr << " " << StatusStr[4] << "   " << nb_statuss[4] << " /  " << stat.size() << "\n";
+}
 //----------------------------------FUNCTION TO CALL
-void compute_voro_diagram_GPU(std::vector<float>& pts, std::vector<Status> &stat, std::vector<float>& bary, int block_size,int nb_Lloyd_iter) {
+void compute_voro_diagram_GPU(std::vector<float>& pts, std::vector<Status> &stat, std::vector<float>& bary,int nb_Lloyd_iter) {
+    int block_size = 32;
     int nbpts = pts.size() / 3;
     kn_problem *kn = NULL;
     {
@@ -569,7 +596,7 @@ void compute_voro_diagram_GPU(std::vector<float>& pts, std::vector<Status> &stat
 
     GPUBuffer<float> out_pts_w(bary);
     GPUBuffer<Status> gpu_stat(stat);
-    {
+    if (nb_Lloyd_iter == 0) {
         IF_VERBOSE(Stopwatch W("GPU voro kernel only"));
 
         cudaEvent_t start, stop;
@@ -595,9 +622,10 @@ void compute_voro_diagram_GPU(std::vector<float>& pts, std::vector<Status> &stat
         cudaEventCreate(&stop);
         cudaEventRecord(start);
 
-        voro_cell_test_GPU_param << < nbpts / block_size + 1, block_size >> > (out_pts_w.gpu_data, nbpts, kn->d_knearests, gpu_stat.gpu_data, (float*)kn->d_stored_points);
-        cuda_check_error();
         voro_cell_test_GPU_param << < nbpts / block_size + 1, block_size >> > ((float*)kn->d_stored_points, nbpts, kn->d_knearests, gpu_stat.gpu_data, out_pts_w.gpu_data);
+        cuda_check_error();
+
+        voro_cell_test_GPU_param << < nbpts / block_size + 1, block_size >> > (out_pts_w.gpu_data, nbpts, kn->d_knearests, gpu_stat.gpu_data, (float*)kn->d_stored_points);
         cuda_check_error();
 
         
@@ -613,18 +641,14 @@ void compute_voro_diagram_GPU(std::vector<float>& pts, std::vector<Status> &stat
         IF_VERBOSE(Stopwatch W("copy data back to the cpu"));
         cudaMemcpy(pts.data(), kn->d_stored_points, kn->allocated_points * sizeof(float) * 3, cudaMemcpyDeviceToHost);
         cuda_check_error();
-        out_pts_w.gpu2cpu();
+        //out_pts_w.gpu2cpu();
         gpu_stat.gpu2cpu();
     }
 
 
 
     kn_free(&kn);
-    IF_VERBOSE(std::cerr << " \n\n\n---------Summary of success/failure------------\n");
-    std::vector<int> nb_statuss(5, 0);
-    FOR(i, stat.size()) nb_statuss[stat[i]]++;
-    IF_VERBOSE(FOR(r, 5) std::cerr << " " << StatusStr[r] << "   " << nb_statuss[r] << "\n";)
-        std::cerr << " " << StatusStr[4] << "   " << nb_statuss[4] << " /  " << nbpts << "\n";
+    show_status_stats(stat);
 }
 
 //#################################################################################"
@@ -632,11 +656,10 @@ void compute_voro_diagram_GPU(std::vector<float>& pts, std::vector<Status> &stat
 //#################################################################################"
 
 void compute_voro_diagram_CPU(
-    std::vector<float>& pts, std::vector<Status> &stat, std::vector<float>& bary
+    std::vector<float>& pts, std::vector<Status> &stat, std::vector<float>& bary, int nb_Lloyd_iter
 ) {
     int nbpts = pts.size() / 3;
-    
-    // compute knn
+   
     kn_problem *kn = NULL;
     {
         Stopwatch W("GPU KNN");
@@ -648,33 +671,36 @@ void compute_voro_diagram_CPU(
     unsigned int* knn = kn_get_knearests(kn);
 
     // run voro on the cpu
-    {
+   if (nb_Lloyd_iter==0){
         Stopwatch W("CPU VORO KERNEL");
             FOR(seed, nbpts)  compute_voro_cell(nvpts, nbpts, knn, stat.data(), bary.data(), seed);
 #ifdef EXPORT_DECOMPOSITION
             export_decomposition();
 #endif
-
-            
-    }
-    drop_xyz_file(bary);
-    drop_xyz_file(pts);
-    
-    // ouput stats
-    IF_VERBOSE(std::cerr << " \n\n\n---------Summary of success/failure------------\n");
-    
-    FOR(r, 5) {
-        std::vector<float> catpts;
-        FOR(i, stat.size()) if (stat[i]==r) FOR(d,3) catpts.push_back(nvpts [3 * i + d]);
-        drop_xyz_file(catpts);
+            show_status_stats(stat);
+            IF_EXPORT_HISTO(gs.show();)
     }
 
-    std::vector<int> nb_statuss(5, 0);
-    FOR(i, stat.size()) nb_statuss[stat[i]]++;
-    IF_VERBOSE(FOR(r, 5) std::cerr << " " << StatusStr[r] << "   " << nb_statuss[r] << "\n";)
-        std::cerr << " " << StatusStr[4] << "   " << nb_statuss[4] << " /  "<< nbpts <<"\n";
-    IF_EXPORT_HISTO(gs.show();)
+   static int callid = 0;
+    FOR(i, nb_Lloyd_iter) {
+        gs.reset();
+        FOR(seed, nbpts)  compute_voro_cell(nvpts, nbpts, knn, stat.data(), bary.data(), seed);
+        FOR(i, pts.size()) pts[i] = bary[i];
+        //if (callid % 10== 0) 
+        {
+            drop_xyz_file(pts);
+            show_status_stats(stat);
+            IF_EXPORT_HISTO(gs.show();)
+        }
+
+    }
+    callid++;
+    free(nvpts);
+    free(knn);
 }
+
+
+
 
 #endif
 
