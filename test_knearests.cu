@@ -136,7 +136,7 @@ int main(int argc, char** argv) {
     
     std::vector<float> pts;
 
-    if (!load_file(argv[1], pts,false)) {
+    if (!load_file(argv[1], pts, false)) {
         std::cerr << argv[1] << ": could not load file" << std::endl;
         return 1;
     }
@@ -181,17 +181,14 @@ int main(int argc, char** argv) {
 
 
     bool run_on_GPU = true;
-
-        {
-            Stopwatch W(" Lloyd");
-            FOR(i, 51) { // to recompute the knn
-                compute_voro_diagram(pts, stat, bary, 1, run_on_GPU);
-            }
-            if (run_on_GPU) drop_xyz_file(pts);
+    {
+        Stopwatch W(" Lloyd");
+        FOR(i, 51) { // to recompute the knn
+            compute_voro_diagram(pts, stat, bary, 1, run_on_GPU);
+        }
+        if (run_on_GPU) drop_xyz_file(pts);
     }
-        return;
 
-    
     return 0;
 }
 

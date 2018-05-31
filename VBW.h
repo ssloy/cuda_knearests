@@ -136,38 +136,43 @@ void drop_xyz_file(std::vector<float>& pts, const char* filename = NULL) {
 }
 
 void export_histogram(std::vector<int> h, const std::string& file_name, const std::string& xlabel, const std::string& ylabel) {
-    {
-        float sum = 0;
-        FOR(i, h.size()) sum += .01*float(h[i]);
-        if (sum == 0) sum = 1;
-        int last = 0;
-        FOR(i, h.size() - 1) if (h[i] > 0) last = i;
+    float sum = 0;
+    FOR(i, h.size()) sum += .01*float(h[i]);
+    if (sum == 0) sum = 1;
+    int last = 0;
+    FOR(i, h.size() - 1) if (h[i] > 0) last = i;
+
+    char name[1024];
+    char cmd[1024];
 #if defined(__linux__)
-        std::ofstream out("tmp.py");
+    sprintf(name, "tmp%d.py", histid++);
+    sprintf(cmd,  "python3 %s", name);
 #else
-        std::ofstream out("C:\\DATA\\tmp.py");
+    sprintf(name, "C:\\DATA\\tmp_%d_.py", histid);
+    sprintf(cmd, "python.exe C:\\DATA\\tmp_%d_.py", histid++);
 #endif        
-        out << "import matplotlib.pyplot as plt\n";
-        out << "y = [";
-        FOR(i, last) out << float(h[i]) / sum << " , ";
-        out << float(h[last]) / sum;
-        out << "]\n";
-        out << "x = [v-.5 for v in range(len(y))]\n";
-        out << "plt.fill_between(x, [0 for i in y], y, step=\"post\", alpha=.8)\n";
-        out << "#plt.step(x, y, where='post')\n";
-        out << "plt.tick_params(axis='both', which='major', labelsize=12)\n";
-        out << "plt.ylabel('" + ylabel + "', fontsize=14)\n";
-        out << "plt.xlabel('" + xlabel + "', fontsize=14)\n";
+    std::ofstream out(name);
+    out << "import matplotlib.pyplot as plt\n";
+    out << "y = [";
+    FOR(i, last) out << float(h[i]) / sum << " , ";
+    out << float(h[last]) / sum;
+    out << "]\n";
+    out << "x = [v-.5 for v in range(len(y))]\n";
+    out << "plt.fill_between(x, [0 for i in y], y, step=\"post\", alpha=.8)\n";
+    out << "#plt.step(x, y, where='post')\n";
+    out << "plt.tick_params(axis='both', which='major', labelsize=12)\n";
+    out << "plt.ylabel('" + ylabel + "', fontsize=14)\n";
+    out << "plt.xlabel('" + xlabel + "', fontsize=14)\n";
 #if defined(__linux__)
-        out << "plt.show()\n";
-    }
-    system("python3 *.py");
+    out << "plt.savefig(\"" + file_name + ".pdf\")\n";
 #else
-        out << "plt.savefig(\"C:/DATA/" + file_name + ".pdf\")\n";
-    }
-    system("python.exe C:\\DATA\\tmp.py");
+    out << "plt.savefig(\"C:/DATA/" + file_name + ".pdf\")\n";
 #endif
+    out << "#plt.show()\n";
+    system(cmd);
 }
+
+
 
     struct GlobalStats {
         GlobalStats() { reset(); }
