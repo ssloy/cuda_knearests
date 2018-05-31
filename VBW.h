@@ -144,6 +144,7 @@ void export_histogram(std::vector<int> h, const std::string& file_name, const st
 
     char name[1024];
     char cmd[1024];
+    static int histid = 0;
 #if defined(__linux__)
     sprintf(name, "tmp%d.py", histid++);
     sprintf(cmd,  "python3 %s", name);
