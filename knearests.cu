@@ -13,6 +13,7 @@
 #include <float.h>
 
 #include "knearests.h"
+#include "stopwatch.h"
 #include "params.h"
 
 // ------------------------------------------------------------
@@ -210,6 +211,7 @@ void gpuMalloc(void **ptr, size_t size) {
 }
 
 void gpuMallocNCopy(void **dst, const void *src, size_t size) {
+    IF_VERBOSE(Stopwatch W("gpuMallocNCopy"));
     gpuMalloc(dst, size);
     cudaError_t err = cudaMemcpy(*dst, src, size, cudaMemcpyHostToDevice);
     if (err != cudaSuccess) {
@@ -219,6 +221,7 @@ void gpuMallocNCopy(void **dst, const void *src, size_t size) {
 }
 
 void gpuMallocNMemset(void **ptr, int value, size_t size) {
+    IF_VERBOSE(Stopwatch W("gpuMallocNMemset"));
     gpuMalloc(ptr, size);
     cudaError_t err = cudaMemset(*ptr, value, size);
     if (err != cudaSuccess) {
@@ -231,7 +234,7 @@ void gpuMallocNMemset(void **ptr, int value, size_t size) {
 
 kn_problem *kn_prepare(float3 *points, int numpoints) {
     kn_problem *kn = (kn_problem*)malloc(sizeof(kn_problem));
-    kn->K = DEFAULT_NB_PLANES;
+//    kn->K = DEFAULT_NB_PLANES;
     kn->allocated_points = numpoints;
 
     kn->d_permutation       = NULL;
@@ -332,7 +335,7 @@ kn_problem *kn_prepare(float3 *points, int numpoints) {
     gpuMallocNMemset((void **)&kn->d_permutation, 0xFF, bufsize); 
 
     // construct initial structure
-    kn_firstbuild(kn,d_points,numpoints);
+    kn_firstbuild(kn, d_points, numpoints);
 
     // we no longer need the initial points
     cudaFree(d_points);
@@ -435,6 +438,7 @@ unsigned int *kn_get_knearests(kn_problem *kn) {
 }
 
 void kn_print_stats(kn_problem *kn) {
+    IF_VERBOSE(Stopwatch W("kn_print_stats"));
     cudaError_t err = cudaSuccess;
 
     int *counters = (int*)malloc(kn->dimx*kn->dimy*kn->dimz*sizeof(int));
@@ -455,9 +459,9 @@ void kn_print_stats(kn_problem *kn) {
         tot += counters[c];
     }
     IF_VERBOSE(std::cerr << "Grid:  points per cell: " << cmin << " (min), " << cmax << " (max), " << (kn->allocated_points)/(float)(kn->dimx*kn->dimy*kn->dimz) << " avg, total " << tot << std::endl);
-    //for (auto H : histo) {
-    //    std::cerr << "[" << H.first << "] => " << H.second << std::endl;
-    //}
+    for (auto H : histo) {
+        std::cerr << "[" << H.first << "] => " << H.second << std::endl;
+    }
     free(counters);
 }
 

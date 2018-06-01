@@ -133,7 +133,13 @@ int main(int argc, char** argv) {
         std::cerr << "Usage: " << argv[0] << " points.xyz" << std::endl;
         return 1;
     }
-    
+    int *initptr = NULL;
+    cudaError_t err = cudaMalloc(&initptr, sizeof(int));
+    if (err != cudaSuccess) {
+        std::cerr << "Failed to allocate (error code << " << cudaGetErrorString(err) << ")! [file: " << __FILE__ << ", line: " <<  __LINE__ << "]" << std::endl;
+        return 1;
+    }
+
     std::vector<float> pts;
 
     if (!load_file(argv[1], pts, false)) {
@@ -190,6 +196,7 @@ int main(int argc, char** argv) {
 //        if (run_on_GPU) drop_xyz_file(pts);
     }
 
+    cudaFree(initptr);
     return 0;
 }
 
