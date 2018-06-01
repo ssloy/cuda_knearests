@@ -10,7 +10,7 @@ endif()
 
 cuda_add_executable(
         test_knearests knearests.h knearests.cu kd_tree.cpp test_knearests.cu
-        OPTIONS "-arch sm_61 -lineinfo"
+        OPTIONS "-arch sm_70 -lineinfo"
         #OPTIONS "-arch sm_30 -lineinfo"
 )
 

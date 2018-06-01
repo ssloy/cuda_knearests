@@ -211,7 +211,7 @@ void gpuMalloc(void **ptr, size_t size) {
 }
 
 void gpuMallocNCopy(void **dst, const void *src, size_t size) {
-    IF_VERBOSE(Stopwatch W("gpuMallocNCopy"));
+//    IF_VERBOSE(Stopwatch W("gpuMallocNCopy"));
     gpuMalloc(dst, size);
     cudaError_t err = cudaMemcpy(*dst, src, size, cudaMemcpyHostToDevice);
     if (err != cudaSuccess) {
@@ -221,7 +221,7 @@ void gpuMallocNCopy(void **dst, const void *src, size_t size) {
 }
 
 void gpuMallocNMemset(void **ptr, int value, size_t size) {
-    IF_VERBOSE(Stopwatch W("gpuMallocNMemset"));
+//    IF_VERBOSE(Stopwatch W("gpuMallocNMemset"));
     gpuMalloc(ptr, size);
     cudaError_t err = cudaMemset(*ptr, value, size);
     if (err != cudaSuccess) {
@@ -379,7 +379,7 @@ void kn_solve(kn_problem *kn) {
         float *cell_max = (float*)malloc(DEFAULT_NB_PLANES * sizeof(float));
         cudaError_t err = cudaMemcpy(cell_max, kn->d_cell_max, DEFAULT_NB_PLANES * sizeof(float), cudaMemcpyDeviceToHost);
         if (err != cudaSuccess) {
-            std::cerr << "[kn_print_stats] Failed to copy from device to host (error code " << cudaGetErrorString(err) << ")!" << std::endl;
+            std::cerr << "Failed to copy from device to host (error code " << cudaGetErrorString(err) << ")!" << std::endl;
             exit(EXIT_FAILURE);
         }
         float m = 0;

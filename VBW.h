@@ -597,7 +597,7 @@ void compute_voro_diagram_GPU(std::vector<float>& pts, std::vector<Status> &stat
         IF_VERBOSE(Stopwatch W("GPU KNN"));
         kn = kn_prepare((float3*) pts.data(), nbpts);
         kn_solve(kn);
-        kn_print_stats(kn);
+//        kn_print_stats(kn);
     }
 
     GPUBuffer<float> out_pts_w(bary);
