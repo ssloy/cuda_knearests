@@ -5,13 +5,9 @@
 #include <sstream>
 #include <cassert>
 
-
-
 #include "params.h"
-#include "VBW.h"
+#include "voronoi.h"
 #include "stopwatch.h"
-
-
 
 void get_bbox(const std::vector<float>& xyz, float& xmin, float& ymin, float& zmin, float& xmax, float& ymax, float& zmax) {
     int nb_v = xyz.size()/3;
@@ -63,9 +59,6 @@ bool load_file(const char* filename, std::vector<float>& xyz, bool normalize=tru
     assert(xyz.size() == npts*3);
     in.close();
 
-
-
-
     if (normalize) { // normalize point cloud between [0,1000]^3
         float xmin,ymin,zmin,xmax,ymax,zmax;
         get_bbox(xyz, xmin, ymin, zmin, xmax, ymax, zmax);
@@ -83,7 +76,14 @@ bool load_file(const char* filename, std::vector<float>& xyz, bool normalize=tru
     return true;
 }
 
-
+void drop_xyz_file(std::vector<float>& pts, const char *filename) {
+    std::fstream file;
+    file.open(filename, std::ios_base::out);
+    file << pts.size() / 3 << std::endl;
+    for(unsigned int i=0; i<pts.size()/3; i++)
+        file << pts[3*i] << "  " << pts[3*i + 1] << "  " << pts[3*i + 2] << std::endl;
+    file.close();
+}
 
 void printDevProp() {
     int devCount; // Number of CUDA devices
@@ -120,13 +120,6 @@ void printDevProp() {
 }
 
 
-
-void compute_voro_diagram(std::vector<float>& pts, std::vector<Status> &stat, std::vector<float>& bary, int nb_Lloyd_iter,bool GPU=true) {
-    if (GPU) compute_voro_diagram_GPU(pts, stat, bary, nb_Lloyd_iter);
-    else compute_voro_diagram_CPU(pts, stat, bary, nb_Lloyd_iter);
-}
-
-
 int main(int argc, char** argv) {
     printDevProp();
     if (2>argc) {
@@ -134,7 +127,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     int *initptr = NULL;
-    cudaError_t err = cudaMalloc(&initptr, sizeof(int));
+    cudaError_t err = cudaMalloc(&initptr, sizeof(int)); // unused memory, needed for initialize the GPU before time measurements
     if (err != cudaSuccess) {
         std::cerr << "Failed to allocate (error code << " << cudaGetErrorString(err) << ")! [file: " << __FILE__ << ", line: " <<  __LINE__ << "]" << std::endl;
         return 1;
@@ -147,60 +140,15 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    
-    //pts.resize(9000);
-    //FOR(i, pts.size()) pts[i] = 1.+998.*double(rand()) / double(RAND_MAX);
-    
-    //FOR(i, pts.size() ) {
-    //    if (i % 3 != 0) continue;
-    //    float x = pts[ i] / 1000.;
-    //    pts[i] = 1000.*x*x; continue;
-    //    x = -1 + 2.*x;
-    //    x = 5.*pow(x, 3.) - 3.*pow(x, 5.) +2*x;
-    //    //pts[3 * i] = 1000.*pow(pts[3 * i] / 1000., 2);
-    //    pts[i] = 1000.*(x -4.)/8.;
-    //}
-
-
-/*
-//    int n=216;
-    int n=100;
-//    int n=46;
-    pts.resize(n*n*n*3);
-    for (int x=0; x<n; x++) {
-        for (int y=0; y<n; y++) {
-            for (int z=0; z<n; z++) {
-                float noise[3] = {0.};
-                for (int i=0; i<3; i++) {
-                    noise[i] = static_cast<float>(rand())/static_cast<float>(RAND_MAX)*1000./n;
-                }
-                pts[(x+y*n+z*n*n)*3+0] = x/static_cast<float>(n)*1000. + noise[0];
-                pts[(x+y*n+z*n*n)*3+1] = y/static_cast<float>(n)*1000. + noise[1];
-                pts[(x+y*n+z*n*n)*3+2] = z/static_cast<float>(n)*1000. + noise[2];
-            }
-        }
-    }
-    drop_xyz_file(pts);
-    return 0;
-*/
-
-
     int nb_pts = pts.size()/3;
     std::vector<float> bary(pts.size(), 0);
     std::vector<Status> stat(nb_pts);
 
-    bool run_on_GPU = true;
-    {
-        FOR(i, 1) { // to recompute the knn
-        	Stopwatch W(" Lloyd");
-//            std::cerr << "Lloyd #" << i << std::endl;
-            compute_voro_diagram(pts, stat, bary, 0, run_on_GPU);
-        }
-//        if (run_on_GPU) drop_xyz_file(pts);
-    }
+    compute_voro_diagram_GPU(pts, stat, bary, 0);
+
+//  drop_xyz_file(bary, "out.xyz");
 
     cudaFree(initptr);
     return 0;
 }
 
- 

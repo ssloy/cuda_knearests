@@ -1,4 +1,3 @@
-// Sylvain Lefebvre 2017-10-04
 #include <stdio.h>
 
 #include <cuda_runtime.h>
@@ -6,10 +5,8 @@
 
 #include <iostream>
 #include <set>
-#include <map>
 #include <vector>
-#include <algorithm>
-#include <random>
+#include <map>
 #include <float.h>
 
 #include "knearests.h"
@@ -92,8 +89,8 @@ __device__ void heapsort(unsigned int *keys, float *vals, int size) {
 
 __global__ void knearest(int xdim, int ydim, int zdim, int num_stored, const int *ptrs, const int *counters, const float3 *stored_points, int num_cell_offsets, const int *cell_offsets, const float *cell_offset_distances, unsigned int *g_knearests, float *d_cell_max) {
     // each thread updates its k-nearests
-    __shared__ unsigned int knearests      [DEFAULT_NB_PLANES*POINTS_PER_BLOCK];
-    __shared__ float        knearests_dists[DEFAULT_NB_PLANES*POINTS_PER_BLOCK];
+    __shared__ unsigned int knearests      [_K_*POINTS_PER_BLOCK];
+    __shared__ float        knearests_dists[_K_*POINTS_PER_BLOCK];
 
     int point_in = threadIdx.x + blockIdx.x*POINTS_PER_BLOCK;
     if (point_in >= num_stored) return;
@@ -102,9 +99,9 @@ __global__ void knearest(int xdim, int ydim, int zdim, int num_stored, const int
     float3 p = stored_points[point_in];
 
     int cell_in = cellFromPoint(xdim, ydim, zdim, p);
-    int offs = threadIdx.x*DEFAULT_NB_PLANES;
+    int offs = threadIdx.x*_K_;
 
-    for (int i = 0; i < DEFAULT_NB_PLANES; i++) {
+    for (int i = 0; i < _K_; i++) {
         knearests      [offs + i] = UINT_MAX;
         knearests_dists[offs + i] = FLT_MAX;
     }
@@ -129,7 +126,7 @@ __global__ void knearest(int xdim, int ydim, int zdim, int num_stored, const int
                     knearests[offs] = ptr;
                     knearests_dists[offs] = d;
 
-                    heapify(knearests+offs, knearests_dists+offs, 0, DEFAULT_NB_PLANES);
+                    heapify(knearests+offs, knearests_dists+offs, 0, _K_);
                 }
             } // pts inside the cell
         } // valid cell id
@@ -138,12 +135,12 @@ __global__ void knearest(int xdim, int ydim, int zdim, int num_stored, const int
         d_cell_max[threadIdx.x] = FLT_MAX; // no guarantee to have found k nearest
     }
 
-    heapsort(knearests+offs, knearests_dists+offs, DEFAULT_NB_PLANES);
+    heapsort(knearests+offs, knearests_dists+offs, _K_);
 
     // store result
-    for (int i = 0; i < DEFAULT_NB_PLANES; i++) {
-        g_knearests[point_in*DEFAULT_NB_PLANES + i] = knearests[offs + i];
-        //g_knearests[point_in*DEFAULT_NB_PLANES + i] = knearests[offs + DEFAULT_NB_PLANES-1 -i];
+    for (int i = 0; i < _K_; i++) {
+        g_knearests[point_in*_K_ + i] = knearests[offs + i];
+        //g_knearests[point_in*_K_ + i] = knearests[offs + _K_-1 -i];
     }
 }
 
@@ -211,7 +208,6 @@ void gpuMalloc(void **ptr, size_t size) {
 }
 
 void gpuMallocNCopy(void **dst, const void *src, size_t size) {
-//    IF_VERBOSE(Stopwatch W("gpuMallocNCopy"));
     gpuMalloc(dst, size);
     cudaError_t err = cudaMemcpy(*dst, src, size, cudaMemcpyHostToDevice);
     if (err != cudaSuccess) {
@@ -221,7 +217,6 @@ void gpuMallocNCopy(void **dst, const void *src, size_t size) {
 }
 
 void gpuMallocNMemset(void **ptr, int value, size_t size) {
-//    IF_VERBOSE(Stopwatch W("gpuMallocNMemset"));
     gpuMalloc(ptr, size);
     cudaError_t err = cudaMemset(*ptr, value, size);
     if (err != cudaSuccess) {
@@ -234,7 +229,6 @@ void gpuMallocNMemset(void **ptr, int value, size_t size) {
 
 kn_problem *kn_prepare(float3 *points, int numpoints) {
     kn_problem *kn = (kn_problem*)malloc(sizeof(kn_problem));
-//    kn->K = DEFAULT_NB_PLANES;
     kn->allocated_points = numpoints;
 
     kn->d_permutation       = NULL;
@@ -300,7 +294,7 @@ kn_problem *kn_prepare(float3 *points, int numpoints) {
     free(cell_offset_dists);
 
 
-    bufsize = DEFAULT_NB_PLANES*sizeof(float);
+    bufsize = _K_*sizeof(float);
     memory_used += bufsize;
     gpuMallocNMemset((void **)&kn->d_cell_max, 0x00, bufsize); 
 
@@ -326,7 +320,7 @@ kn_problem *kn_prepare(float3 *points, int numpoints) {
     memory_used += bufsize;
     gpuMallocNMemset((void **)&kn->d_stored_points, 0x00, bufsize); 
 
-    bufsize += kn->allocated_points*DEFAULT_NB_PLANES*sizeof(int);
+    bufsize += kn->allocated_points*_K_*sizeof(int);
     memory_used += bufsize;
     gpuMallocNMemset((void **)&kn->d_knearests, 0xFF, bufsize); 
 
@@ -376,14 +370,14 @@ void kn_solve(kn_problem *kn) {
     IF_VERBOSE(std::cerr << "kn_solve: " << milliseconds << " msec" << std::endl);
 
     {
-        float *cell_max = (float*)malloc(DEFAULT_NB_PLANES * sizeof(float));
-        cudaError_t err = cudaMemcpy(cell_max, kn->d_cell_max, DEFAULT_NB_PLANES * sizeof(float), cudaMemcpyDeviceToHost);
+        float *cell_max = (float*)malloc(_K_ * sizeof(float));
+        cudaError_t err = cudaMemcpy(cell_max, kn->d_cell_max, _K_ * sizeof(float), cudaMemcpyDeviceToHost);
         if (err != cudaSuccess) {
             std::cerr << "Failed to copy from device to host (error code " << cudaGetErrorString(err) << ")!" << std::endl;
             exit(EXIT_FAILURE);
         }
         float m = 0;
-        for (int i=0; i<DEFAULT_NB_PLANES; i++) {
+        for (int i=0; i<_K_; i++) {
             if (cell_max[i]>m) m = cell_max[i];
         }
         std::cerr << "Max visited ring: " << (sqrtf(m)/1000.*kn->dimx+1) << " / " << (pow(kn->num_cell_offsets, 1./3.)-1)/2. << std::endl;
@@ -411,7 +405,7 @@ float3 *kn_get_points(kn_problem *kn) {
     float3 *stored_points = (float3*)malloc(kn->allocated_points * sizeof(float3));
     cudaError_t err = cudaMemcpy(stored_points, kn->d_stored_points, kn->allocated_points * sizeof(float3), cudaMemcpyDeviceToHost);
     if (err != cudaSuccess) {
-        std::cerr << "[kn_print_stats] Failed to copy from device to host (error code " << cudaGetErrorString(err) << ")!" << std::endl;
+        std::cerr << "[kn_get_points] Failed to copy from device to host (error code " << cudaGetErrorString(err) << ")!" << std::endl;
         exit(EXIT_FAILURE);
     }
     return stored_points;
@@ -421,15 +415,15 @@ unsigned int *kn_get_permutation(kn_problem *kn) {
     unsigned int *permutation = (unsigned int*)malloc(kn->allocated_points*sizeof(int));
     cudaError_t err = cudaMemcpy(permutation, kn->d_permutation, kn->allocated_points * sizeof(int), cudaMemcpyDeviceToHost);
     if (err != cudaSuccess) {
-        std::cerr << "[kn_print_stats] Failed to copy from device to host (error code " << cudaGetErrorString(err) << ")!" << std::endl;
+        std::cerr << "[kn_get_permutation] Failed to copy from device to host (error code " << cudaGetErrorString(err) << ")!" << std::endl;
         exit(EXIT_FAILURE);
     }
     return permutation;
 }
 
 unsigned int *kn_get_knearests(kn_problem *kn) {
-    unsigned int *knearests = (unsigned int*)malloc(kn->allocated_points * DEFAULT_NB_PLANES * sizeof(int));
-    cudaError_t err = cudaMemcpy(knearests, kn->d_knearests, kn->allocated_points * DEFAULT_NB_PLANES * sizeof(int), cudaMemcpyDeviceToHost);
+    unsigned int *knearests = (unsigned int*)malloc(kn->allocated_points * _K_ * sizeof(int));
+    cudaError_t err = cudaMemcpy(knearests, kn->d_knearests, kn->allocated_points * _K_ * sizeof(int), cudaMemcpyDeviceToHost);
     if (err != cudaSuccess) {
         std::cerr << "[kn_print_stats] Failed to copy from device to host (error code " << cudaGetErrorString(err) << ")!" << std::endl;
         exit(EXIT_FAILURE);
@@ -438,7 +432,7 @@ unsigned int *kn_get_knearests(kn_problem *kn) {
 }
 
 void kn_print_stats(kn_problem *kn) {
-    IF_VERBOSE(Stopwatch W("kn_print_stats"));
+    Stopwatch W("kn_print_stats");
     cudaError_t err = cudaSuccess;
 
     int *counters = (int*)malloc(kn->dimx*kn->dimy*kn->dimz*sizeof(int));
@@ -458,7 +452,7 @@ void kn_print_stats(kn_problem *kn) {
         cmax = max(cmax, counters[c]);
         tot += counters[c];
     }
-    IF_VERBOSE(std::cerr << "Grid:  points per cell: " << cmin << " (min), " << cmax << " (max), " << (kn->allocated_points)/(float)(kn->dimx*kn->dimy*kn->dimz) << " avg, total " << tot << std::endl);
+    std::cerr << "Grid:  points per cell: " << cmin << " (min), " << cmax << " (max), " << (kn->allocated_points)/(float)(kn->dimx*kn->dimy*kn->dimz) << " avg, total " << tot << std::endl;
     for (auto H : histo) {
         std::cerr << "[" << H.first << "] => " << H.second << std::endl;
     }

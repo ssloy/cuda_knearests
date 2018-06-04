@@ -9,7 +9,7 @@ if (OPENMP_FOUND)
 endif()
 
 cuda_add_executable(
-        test_knearests knearests.h knearests.cu kd_tree.cpp test_knearests.cu
+        test_knearests voronoi.cu knearests.cu test_knearests.cu
         OPTIONS "-arch sm_61 -lineinfo"
         #OPTIONS "-arch sm_30 -lineinfo"
 )
