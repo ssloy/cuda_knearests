@@ -162,15 +162,17 @@ int main(int argc, char** argv) {
     //}
 
 
-    /*
-    int n=216;
+/*
+//    int n=216;
+    int n=100;
+//    int n=46;
     pts.resize(n*n*n*3);
     for (int x=0; x<n; x++) {
         for (int y=0; y<n; y++) {
             for (int z=0; z<n; z++) {
                 float noise[3] = {0.};
                 for (int i=0; i<3; i++) {
-                    noise[i] = 3.*static_cast<float>(rand())/static_cast<float>(RAND_MAX);
+                    noise[i] = static_cast<float>(rand())/static_cast<float>(RAND_MAX)*1000./n;
                 }
                 pts[(x+y*n+z*n*n)*3+0] = x/static_cast<float>(n)*1000. + noise[0];
                 pts[(x+y*n+z*n*n)*3+1] = y/static_cast<float>(n)*1000. + noise[1];
@@ -178,20 +180,21 @@ int main(int argc, char** argv) {
             }
         }
     }
+    drop_xyz_file(pts);
+    return 0;
 */
+
 
     int nb_pts = pts.size()/3;
     std::vector<float> bary(pts.size(), 0);
     std::vector<Status> stat(nb_pts);
-   
-
 
     bool run_on_GPU = true;
     {
-        FOR(i, 3) { // to recompute the knn
+        FOR(i, 1) { // to recompute the knn
         	Stopwatch W(" Lloyd");
 //            std::cerr << "Lloyd #" << i << std::endl;
-            compute_voro_diagram(pts, stat, bary, 1, run_on_GPU);
+            compute_voro_diagram(pts, stat, bary, 0, run_on_GPU);
         }
 //        if (run_on_GPU) drop_xyz_file(pts);
     }

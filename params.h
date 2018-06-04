@@ -2,10 +2,10 @@
 
 
 // white
-//#define POINTS_PER_BLOCK 16
-//#define DEFAULT_NB_PLANES 190
-//#define MAX_CLIPS  45
-//#define MAX_T  64
+#define POINTS_PER_BLOCK 32
+#define DEFAULT_NB_PLANES 35
+#define MAX_CLIPS  45
+#define MAX_T  64
 
 //blue
 //#define POINTS_PER_BLOCK 64
@@ -14,10 +14,10 @@
 //#define MAX_T  50
 
 //perturbed grid
-#define POINTS_PER_BLOCK 64
-#define DEFAULT_NB_PLANES 60
-#define MAX_CLIPS  40
-#define MAX_T  64
+//#define POINTS_PER_BLOCK 64
+//#define DEFAULT_NB_PLANES 60
+//#define MAX_CLIPS  40
+//#define MAX_T  64
 
 
 #define IF_EXPORT_HISTO(x) x
