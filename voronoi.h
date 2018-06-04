@@ -18,9 +18,9 @@
 
 typedef unsigned char uchar;  // local indices with special values
 
-__shared__ uchar3 tr_data[32 * _MAX_T_]; // memory pool for chained lists of triangles
-__shared__ uchar boundary_next_data[32 * _MAX_P_];
-__shared__ float4 clip_data[32 * _MAX_P_]; // clipping planes
+__shared__ uchar3 tr_data[VORO_BLOCK_SIZE * _MAX_T_]; // memory pool for chained lists of triangles
+__shared__ uchar boundary_next_data[VORO_BLOCK_SIZE * _MAX_P_];
+__shared__ float4 clip_data[VORO_BLOCK_SIZE * _MAX_P_]; // clipping planes
 
 inline  __device__ uchar3& tr(int t) { return  tr_data[threadIdx.x*_MAX_T_ + t]; }
 inline  __device__ uchar& boundary_next(int v) { return  boundary_next_data[threadIdx.x*_MAX_P_ + v]; }

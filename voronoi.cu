@@ -273,12 +273,13 @@ __device__ void compute_voro_cell(float * pts, int nbpts, unsigned int* neigs, S
     ConvexCell cc(seed, pts, &(gpu_stat[seed]));
 
     FOR(v, _K_) {
-        cc.clip_by_plane(neigs[_K_ * seed + v]);
-#ifndef __CUDA_ARCH__
-        if (cc.is_security_radius_reached(point_from_ptr3(pts + 3*neigs[_K_ * seed + v]))) {
-            break;
-        }
-#endif
+	 unsigned int z = neigs[_K_ * seed + v];
+        cc.clip_by_plane(z);
+//#ifndef __CUDA_ARCH__
+      if (cc.is_security_radius_reached(point_from_ptr3(pts + 3*z))) {
+          break;
+      }
+//#endif
         if (gpu_stat[seed] != success) {
             return;
         }
@@ -332,7 +333,6 @@ void cuda_check_error() {
 }
 
 void compute_voro_diagram_GPU(std::vector<float>& pts, std::vector<Status> &stat, std::vector<float>& bary,int nb_Lloyd_iter) {
-    int block_size = 32;
     int nbpts = pts.size() / 3;
     kn_problem *kn = NULL;
     {
@@ -354,7 +354,7 @@ void compute_voro_diagram_GPU(std::vector<float>& pts, std::vector<Status> &stat
         cudaEventCreate(&stop);
         cudaEventRecord(start);
 
-        voro_cell_test_GPU_param << < nbpts / block_size + 1, block_size >> > ((float*)kn->d_stored_points, nbpts, kn->d_knearests, gpu_stat.gpu_data, out_pts_w.gpu_data);
+        voro_cell_test_GPU_param << < nbpts / VORO_BLOCK_SIZE + 1, VORO_BLOCK_SIZE >> > ((float*)kn->d_stored_points, nbpts, kn->d_knearests, gpu_stat.gpu_data, out_pts_w.gpu_data);
         cuda_check_error();
 
         cudaEventRecord(stop);
@@ -372,10 +372,10 @@ void compute_voro_diagram_GPU(std::vector<float>& pts, std::vector<Status> &stat
 //      cudaEventCreate(&stop);
 //      cudaEventRecord(start);
 
-//      voro_cell_test_GPU_param << < nbpts / block_size + 1, block_size >> > ((float*)kn->d_stored_points, nbpts, kn->d_knearests, gpu_stat.gpu_data, out_pts_w.gpu_data);
+//      voro_cell_test_GPU_param << < nbpts / VORO_BLOCK_SIZE + 1, VORO_BLOCK_SIZE >> > ((float*)kn->d_stored_points, nbpts, kn->d_knearests, gpu_stat.gpu_data, out_pts_w.gpu_data);
 //      cuda_check_error();
 
-//      voro_cell_test_GPU_param << < nbpts / block_size + 1, block_size >> > (out_pts_w.gpu_data, nbpts, kn->d_knearests, gpu_stat.gpu_data, (float*)kn->d_stored_points);
+//      voro_cell_test_GPU_param << < nbpts / VORO_BLOCK_SIZE + 1, VORO_BLOCK_SIZE >> > (out_pts_w.gpu_data, nbpts, kn->d_knearests, gpu_stat.gpu_data, (float*)kn->d_stored_points);
 //      cuda_check_error();
 
 

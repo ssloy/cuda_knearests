@@ -6,7 +6,7 @@ typedef struct {
     int num_cell_offsets;        // actual number of cells in the offset grid
     int *d_cell_offsets;         // cell offsets (sorted by rings), Nmax*Nmax*Nmax*Nmax
     float *d_cell_offset_dists;  // stores min dist to the cells in the rings
-    float *d_cell_max;           // POINTS_PER_BLOCK floats, store max visited ring per thread id
+    float *d_cell_max;           // KNN_BLOCK_SIZE floats, store max visited ring per thread id
     unsigned int *d_permutation; // allows to restore original point order
     int *d_counters;             // counters per cell,   dimx*dimy*dimz
     int *d_ptrs;                 // cell start pointers, dimx*dimy*dimz

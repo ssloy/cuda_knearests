@@ -89,10 +89,10 @@ __device__ void heapsort(unsigned int *keys, float *vals, int size) {
 
 __global__ void knearest(int xdim, int ydim, int zdim, int num_stored, const int *ptrs, const int *counters, const float3 *stored_points, int num_cell_offsets, const int *cell_offsets, const float *cell_offset_distances, unsigned int *g_knearests, float *d_cell_max) {
     // each thread updates its k-nearests
-    __shared__ unsigned int knearests      [_K_*POINTS_PER_BLOCK];
-    __shared__ float        knearests_dists[_K_*POINTS_PER_BLOCK];
+    __shared__ unsigned int knearests      [_K_*KNN_BLOCK_SIZE];
+    __shared__ float        knearests_dists[_K_*KNN_BLOCK_SIZE];
 
-    int point_in = threadIdx.x + blockIdx.x*POINTS_PER_BLOCK;
+    int point_in = threadIdx.x + blockIdx.x*KNN_BLOCK_SIZE;
     if (point_in >= num_stored) return;
 
     // point considered by this thread
@@ -344,8 +344,8 @@ void kn_solve(kn_problem *kn) {
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
 
-    int threadsPerBlock = POINTS_PER_BLOCK;
-    int blocksPerGrid = (kn->allocated_points + threadsPerBlock - 1) / POINTS_PER_BLOCK;
+    int threadsPerBlock = KNN_BLOCK_SIZE;
+    int blocksPerGrid = (kn->allocated_points + threadsPerBlock - 1) / KNN_BLOCK_SIZE;
 
     IF_VERBOSE(std::cerr << "threads per block: " << threadsPerBlock << ", blocks per grid: " << blocksPerGrid << std::endl);
 
